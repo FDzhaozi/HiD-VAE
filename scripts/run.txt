@@ -1,0 +1,27 @@
+python train_rqvae.py configs/rqvae_amazon.gin
+# accelerate launch train_rqvae.py configs/rqvae_amazon.gin   有报错
+python train_h_rqvae.py configs/h_rqvae_amazon.gin
+
+
+
+# view
+python scripts/view_train_rqvae.py configs/rqvae_amazon.gin
+python scripts/view_train_hrqvae.py configs/h_rqvae_amazon.gin
+
+
+# decoder
+python train_decoder.py configs/decoder_amazon.gin
+
+
+
+# tokenizer
+python -m modules.tokenizer.semids --dataset beauty --input_dim 768 --n_cat_feats 0
+python -m modules.tokenizer.h_semids --dataset beauty --input_dim 768 --n_cat_feats 0 --tag_embed_dim 768
+
+# 可以断开ssh后继续运行
+tmux new -s rqvae     # 创建一个名为 "my_session" 的新会话
+在 tmux 中运行程序​​：
+python train_decoder.py configs/decoder_amazon.gin
+先按住 Ctrl 不放，再按 B，然后松开所有键，​​再单独按 D​​。你会退出 tmux，回到原始终端界面（底部状态栏消失）。
+tmux attach -t rqvae  # 重新连接到名为 "my_session" 的会话
+tmux ls   # 查看所有会话

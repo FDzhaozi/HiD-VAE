@@ -1,0 +1,64 @@
+import data.tags_processed
+import modules.quantize
+
+train.iterations=400000
+train.learning_rate=0.0005
+train.weight_decay=0.01
+train.batch_size=128
+train.vae_input_dim=768
+train.vae_n_cat_feats=0
+train.vae_hidden_dims=[512, 256, 128]
+train.vae_embed_dim=32
+train.vae_codebook_size=256
+train.vae_codebook_normalize=False
+train.vae_sim_vq=False
+train.save_model_every=5000
+train.eval_every=5000
+train.dataset_folder="dataset/amazon"
+train.dataset=%data.tags_processed.RecDataset.AMAZON
+train.save_dir_root="out/hrqvae/amazon/"
+train.commitment_weight=0.35
+train.vae_n_layers=3
+train.vae_codebook_mode=%modules.quantize.QuantizeForwardMode.ROTATION_TRICK
+
+# 提高regularization
+train.use_kmeans_init=True
+train.weight_decay=0.015  # 增加权重衰减
+
+# 学习率策略
+train.layer_specific_lr=True
+train.predictor_weight_decay=0.025  # 增加预测器权重衰减
+train.gradient_accumulate_every=2  # 增加梯度累积，提高稳定性
+
+# 标签预测参数
+train.tag_alignment_weight=0.03
+train.tag_prediction_weight=0.25  # 略微增加标签预测权重
+train.tag_class_counts=[6, 130, 927]  
+train.tag_embed_dim = 768
+
+# 数据集参数
+train.force_dataset_process=False
+train.dataset_split="beauty"
+train.do_eval=True
+
+# 焦点损失相关配置
+train.rare_tag_threshold=30
+train.use_focal_loss=True
+train.focal_loss_gamma_base=2.5
+train.focal_loss_alpha_base=0.25
+
+# 正则化和网络结构相关配置
+train.dropout_rate=0.35  # 略微增加dropout率
+train.use_batch_norm=True
+train.alignment_temperature=0.1  # 增加对比学习温度
+
+# 新增: 防止过拟合的高级策略
+train.use_label_smoothing=True
+train.label_smoothing_alpha=0.1
+train.use_mixup=True
+train.mixup_alpha=0.2
+
+# 新增: 评估策略
+train.eval_tta=True  # 测试时增强(Test Time Augmentation)
+train.eval_temperature=0.8  # 预测时降低softmax温度，使预测更加确定
+train.ensemble_predictions=True  # 使用多次前向传播的集成预测
