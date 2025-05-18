@@ -17,6 +17,7 @@ from modules.h_rqvae import HRqVae
 from modules.quantize import QuantizeForwardMode
 from modules.tokenizer.semids import SemanticIdTokenizer
 from torch.optim import AdamW
+from torch.optim import lr_scheduler
 from torch.utils.data import BatchSampler
 from torch.utils.data import DataLoader
 from torch.utils.data import RandomSampler
@@ -87,12 +88,22 @@ def train(
     eval_tta=True,  # 测试时增强
     eval_temperature=0.8,  # 预测时的温度参数
     ensemble_predictions=True,  # 是否使用集成预测
+    # 新增: 学习率调度器参数
+    use_lr_scheduler=True,
+    lr_scheduler_type='cosine',  # 'cosine', 'reduce_on_plateau', 'step'
+    lr_scheduler_T_max=400000, # For CosineAnnealingLR: Number of iterations for one cycle
+    lr_scheduler_eta_min=1e-7, # For CosineAnnealingLR: Minimum learning rate
+    lr_scheduler_step_size=100000, # For StepLR: Period of learning rate decay
+    lr_scheduler_gamma=0.5, # For StepLR: Multiplicative factor of learning rate decay
+    lr_scheduler_factor=0.5, # For ReduceLROnPlateau: Factor by which the learning rate will be reduced
+    lr_scheduler_patience=10, # For ReduceLROnPlateau: Number of epochs with no improvement after which learning rate will be reduced
 ):
     # 设置日志记录
     # 创建图表保存目录
     time_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     save_dir = os.path.join(save_dir_root, f"hrqvae_{dataset.name}_{time_stamp}")
-    log_dir = os.path.join(save_dir_root, "log")
+    #log_dir = os.path.join(save_dir_root, "log")
+    log_dir = os.path.join(save_dir, "log")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
@@ -142,6 +153,9 @@ def train(
         split_batches=split_batches,
         mixed_precision=mixed_precision_type if amp else 'no'
     )
+    
+    best_eval_accuracy = 0.0
+    best_model_path = None
     
     # 记录训练参数
     if accelerator.is_main_process:
@@ -467,10 +481,10 @@ def train(
         
         # 为每层标签预测器和投影器使用不同的学习率和权重衰减
         for i in range(vae_n_layers):
-            # 预测器的学习率随层数增加而减小，权重衰减随层数增加而增大
-            predictor_lr = learning_rate / (1 + i * 0.2)
-            predictor_wd = predictor_weight_decay * (1 + i * 0.5)
-            
+            # 预测器的学习率随层数增加而略微增加，权重衰减随层数增加而略微减小
+            predictor_lr = learning_rate * (1 + i * 0.1) 
+            predictor_wd = predictor_weight_decay / (1 + i * 0.2) if predictor_weight_decay > 0 and (1 + i * 0.2) > 0 else predictor_weight_decay
+
             param_groups.append({
                 'params': model.tag_predictors[i].parameters(),
                 'lr': predictor_lr,
@@ -554,6 +568,30 @@ def train(
     model, optimizer = accelerator.prepare(
         model, optimizer
     )
+
+    # 初始化学习率调度器
+    scheduler = None
+    if use_lr_scheduler:
+        if lr_scheduler_type == 'cosine':
+            scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=lr_scheduler_T_max, eta_min=lr_scheduler_eta_min, last_epoch=start_iter-1 if start_iter > 0 else -1)
+            if accelerator.is_main_process:
+                logger.info(f"使用CosineAnnealingLR调度器: T_max={lr_scheduler_T_max}, eta_min={lr_scheduler_eta_min}")
+        elif lr_scheduler_type == 'step':
+            scheduler = lr_scheduler.StepLR(optimizer, step_size=lr_scheduler_step_size, gamma=lr_scheduler_gamma, last_epoch=start_iter-1 if start_iter > 0 else -1)
+            if accelerator.is_main_process:
+                logger.info(f"使用StepLR调度器: step_size={lr_scheduler_step_size}, gamma={lr_scheduler_gamma}")
+        # ReduceLROnPlateau需要一个指标来监控，通常是验证损失，所以直接在迭代中调用比较复杂
+        # For now, we are not supporting ReduceLROnPlateau directly in this script due to its metric dependency.
+        # elif lr_scheduler_type == 'reduce_on_plateau':
+        #     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=lr_scheduler_factor, patience=lr_scheduler_patience, verbose=True)
+        #     if accelerator.is_main_process:
+        #         logger.info(f"使用ReduceLROnPlateau调度器: factor={lr_scheduler_factor}, patience={lr_scheduler_patience}")
+        else:
+            if accelerator.is_main_process:
+                logger.warning(f"不支持的学习率调度器类型: {lr_scheduler_type}. 将不使用调度器.")
+
+    if scheduler: # Prepare scheduler with accelerator if it exists
+        scheduler = accelerator.prepare(scheduler)
 
     # 创建语义ID分词器
     tokenizer = SemanticIdTokenizer(
@@ -664,6 +702,10 @@ def train(
 
             optimizer.step()
             
+            # 更新学习率 (如果使用了调度器)
+            if scheduler and lr_scheduler_type != 'reduce_on_plateau': # ReduceLROnPlateau is typically stepped after validation
+                scheduler.step()
+            
             accelerator.wait_for_everyone()
 
             id_diversity_log = {}
@@ -701,6 +743,11 @@ def train(
                     if model_output.tag_pred_accuracy_by_layer is not None:
                         layer_acc_str = ", ".join([f"层{i}: {acc.cpu().item():.4f}" for i, acc in enumerate(model_output.tag_pred_accuracy_by_layer)])
                         logger.info(f"每层标签预测准确率: {layer_acc_str}")
+                    
+                    # 记录当前学习率
+                    current_lrs = [group['lr'] for group in optimizer.param_groups]
+                    lr_str = ", ".join([f"{lr:.2e}" for lr in current_lrs])
+                    logger.info(f"当前学习率: {lr_str}")
             # 评估阶段
             if do_eval and ((iter+1) % eval_every == 0 or iter+1 == iterations):
                 model.eval()
@@ -993,22 +1040,65 @@ def train(
                         elif eval_model_output.tag_pred_accuracy_by_layer is not None:
                             eval_layer_acc_str = ", ".join([f"层{i}: {acc.cpu().item():.4f}" for i, acc in enumerate(eval_model_output.tag_pred_accuracy_by_layer)])
                             logger.info(f"评估 - 每层标签预测准确率: {eval_layer_acc_str}")
-            # 保存模型
-            if accelerator.is_main_process:
-                if (iter+1) % save_model_every == 0 or iter+1 == iterations:
-                    state = {
-                        "iter": iter,
-                        "model": model.state_dict(),
-                        "model_config": model.config,
-                        "optimizer": optimizer.state_dict()
-                    }
 
-                    if not os.path.exists(save_dir_root):
-                        os.makedirs(save_dir_root)
+                    # 新的模型保存逻辑：只保存最佳模型
+                    current_eval_accuracy = eval_losses[5]  # eval_tag_pred_accuracy
+                    current_rqvae_loss = eval_losses[2]   # eval_rqvae_loss
 
-                    save_path = save_dir_root + f"hrqvae_checkpoint_{iter}.pt"
-                    torch.save(state, save_path)
-                    logger.info(f"保存模型检查点到: {save_path}")
+                    if current_eval_accuracy > best_eval_accuracy:
+                        best_eval_accuracy = current_eval_accuracy
+                        logger.info(f"新的最佳模型！准确率: {best_eval_accuracy:.4f}, RQVAE损失: {current_rqvae_loss:.4f}")
+
+                        # 删除旧的最佳模型 (如果存在)
+                        if best_model_path and os.path.exists(best_model_path):
+                            try:
+                                os.remove(best_model_path)
+                                logger.info(f"已删除旧的最佳模型: {best_model_path}")
+                            except OSError as e:
+                                logger.error(f"删除旧的最佳模型失败: {e}")
+                        
+                        # 保存新的最佳模型
+                        model_save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        
+                        # 确保保存目录存在 (save_dir 在函数开头定义)
+                        if not os.path.exists(save_dir):
+                            os.makedirs(save_dir)
+
+                        new_best_model_filename = f"hrqvae_best_model_ACC{best_eval_accuracy:.4f}_RQLOSS{current_rqvae_loss:.4f}_{model_save_timestamp}.pt"
+                        new_best_model_path = os.path.join(save_dir, new_best_model_filename)
+                        
+                        unwrapped_model = accelerator.unwrap_model(model)
+                        state = {
+                            "iter": iter + 1,
+                            "model": unwrapped_model.state_dict(),
+                            "model_config": unwrapped_model.config,
+                            "optimizer": optimizer.state_dict(),
+                            "accuracy": best_eval_accuracy,
+                            "rqvae_loss": current_rqvae_loss
+                        }
+                        
+                        accelerator.save(state, new_best_model_path)
+                        best_model_path = new_best_model_path
+                        logger.info(f"最佳模型已保存到: {best_model_path}")
+                    else:
+                        logger.info(f"当前评估准确率 {current_eval_accuracy:.4f} 未超过最佳准确率 {best_eval_accuracy:.4f}")
+            # 原有的周期性保存逻辑已移除
+            # # 保存模型
+            # if accelerator.is_main_process:
+            #     if (iter+1) % save_model_every == 0 or iter+1 == iterations:
+            #         state = {
+            #             "iter": iter,
+            #             "model": model.state_dict(),
+            #             "model_config": model.config,
+            #             "optimizer": optimizer.state_dict()
+            #         }
+
+            #         if not os.path.exists(save_dir_root):
+            #             os.makedirs(save_dir_root)
+
+            #         save_path = save_dir_root + f"hrqvae_checkpoint_{iter}.pt"
+            #         torch.save(state, save_path)
+            #         logger.info(f"保存模型检查点到: {save_path}")
                     
                 # 计算ID多样性指标
                 if (iter+1) % eval_every == 0 or iter+1 == iterations:

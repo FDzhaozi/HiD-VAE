@@ -62,7 +62,7 @@ class TagPredictor(nn.Module):
         )
         
         # 中间层尺寸
-        mid_dim = hidden_dim // (layer_idx + 1) if layer_idx > 0 else hidden_dim
+        mid_dim = int(hidden_dim * 0.8)
         
         # 第二部分：残差模块
         self.residual_block1 = nn.Sequential(
@@ -85,12 +85,13 @@ class TagPredictor(nn.Module):
         )
         
         # 输出层
+        classifier_mid_dim = mid_dim
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, mid_dim),
-            nn.LayerNorm(mid_dim) if use_batch_norm else nn.Identity(),
+            nn.Linear(hidden_dim, classifier_mid_dim),
+            nn.LayerNorm(classifier_mid_dim) if use_batch_norm else nn.Identity(),
             nn.ReLU(),
             nn.Dropout(dropout_rate * 0.5),  # 输出层降低dropout以保留更多信息
-            nn.Linear(mid_dim, num_classes)
+            nn.Linear(classifier_mid_dim, num_classes)
         )
         
         # 标签平滑正则化参数
