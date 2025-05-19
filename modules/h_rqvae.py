@@ -42,13 +42,15 @@ class TagPredictor(nn.Module):
         
         # 根据层索引调整dropout率，越深的层dropout率越高
         # 但不要太高，避免信息丢失过多
-        dropout_rate = min(0.4, dropout_rate + layer_idx * 0.05)
+        dropout_rate = min(0.55, dropout_rate + layer_idx * 0.075)
         
         # 自注意力机制 - 帮助模型关注输入特征中的重要部分
         self.attention = nn.Sequential(
             nn.Linear(embed_dim, embed_dim // 4),
             nn.ReLU(),
-            nn.Linear(embed_dim // 4, embed_dim),
+            nn.Linear(embed_dim // 4, embed_dim // 2),
+            nn.GELU(),
+            nn.Linear(embed_dim // 2, embed_dim),
             nn.Sigmoid()
         )
         
@@ -62,7 +64,7 @@ class TagPredictor(nn.Module):
         )
         
         # 中间层尺寸
-        mid_dim = int(hidden_dim * 0.8)
+        mid_dim = int(hidden_dim * 0.9)
         
         # 第二部分：残差模块
         self.residual_block1 = nn.Sequential(
@@ -71,6 +73,8 @@ class TagPredictor(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(mid_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
             nn.LayerNorm(hidden_dim) if use_batch_norm else nn.Identity(),
         )
         
@@ -81,6 +85,8 @@ class TagPredictor(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(mid_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
             nn.LayerNorm(hidden_dim) if use_batch_norm else nn.Identity(),
         )
         
@@ -90,8 +96,11 @@ class TagPredictor(nn.Module):
             nn.Linear(hidden_dim, classifier_mid_dim),
             nn.LayerNorm(classifier_mid_dim) if use_batch_norm else nn.Identity(),
             nn.ReLU(),
-            nn.Dropout(dropout_rate * 0.5),  # 输出层降低dropout以保留更多信息
-            nn.Linear(classifier_mid_dim, num_classes)
+            nn.Dropout(dropout_rate),
+            nn.Linear(classifier_mid_dim, classifier_mid_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate * 0.5),
+            nn.Linear(classifier_mid_dim // 2, num_classes)
         )
         
         # 标签平滑正则化参数

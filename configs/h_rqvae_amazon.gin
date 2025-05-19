@@ -2,7 +2,7 @@ import data.tags_processed
 import modules.quantize
 
 train.iterations=400000
-train.learning_rate=0.0003
+train.learning_rate=0.00028
 train.weight_decay=0.015
 train.batch_size=128
 train.vae_input_dim=768
@@ -10,20 +10,19 @@ train.vae_n_cat_feats=0
 train.vae_hidden_dims=[512, 256, 128]
 train.vae_embed_dim=32
 train.vae_codebook_size=256
-train.vae_codebook_normalize=False
+train.vae_codebook_normalize=True
 train.vae_sim_vq=False
 train.save_model_every=5000
 train.eval_every=5000
 train.dataset_folder="dataset/amazon"
 train.dataset=%data.tags_processed.RecDataset.AMAZON
 train.save_dir_root="out/hrqvae/amazon/"
-train.commitment_weight=0.35
+train.commitment_weight=0.3
 train.vae_n_layers=3
 train.vae_codebook_mode=%modules.quantize.QuantizeForwardMode.ROTATION_TRICK
 
 # 提高regularization
 train.use_kmeans_init=True
-train.weight_decay=0.015
 
 # 学习率策略
 train.layer_specific_lr=True
@@ -31,8 +30,8 @@ train.predictor_weight_decay=0.015
 train.gradient_accumulate_every=2
 
 # 标签预测参数
-train.tag_alignment_weight=0.05
-train.tag_prediction_weight=0.40
+train.tag_alignment_weight=0.15
+train.tag_prediction_weight=0.55
 train.tag_class_counts=[6, 130, 927]
 train.tag_embed_dim = 768
 
@@ -44,17 +43,17 @@ train.do_eval=True
 # 焦点损失相关配置
 train.rare_tag_threshold=30
 train.use_focal_loss=True
-train.focal_loss_gamma_base=2.75
-train.focal_loss_alpha_base=0.25
+train.focal_loss_gamma_base=2.7
+train.focal_loss_alpha_base=0.24
 
 # 正则化和网络结构相关配置
-train.dropout_rate=0.35
+train.dropout_rate=0.4
 train.use_batch_norm=True
-train.alignment_temperature=0.08
+train.alignment_temperature=0.1
 
 # 新增: 防止过拟合的高级策略
 train.use_label_smoothing=True
-train.label_smoothing_alpha=0.1
+train.label_smoothing_alpha=0.13
 train.use_mixup=True
 train.mixup_alpha=0.2
 
@@ -67,7 +66,7 @@ train.ensemble_predictions=True
 train.use_lr_scheduler=True
 train.lr_scheduler_type='cosine'
 train.lr_scheduler_T_max=400000
-train.lr_scheduler_eta_min=1e-8
+train.lr_scheduler_eta_min=7e-8
 train.lr_scheduler_step_size=100000
 train.lr_scheduler_gamma=0.5
 train.lr_scheduler_factor=0.5

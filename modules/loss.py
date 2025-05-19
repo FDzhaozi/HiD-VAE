@@ -80,7 +80,7 @@ class TagAlignmentLoss(nn.Module):
         positive_sim_loss = (1.0 - positive_logits).mean()
 
         # 根据层索引调整权重
-        layer_weight = 1.0 / (layer_idx + 1)  # 第一层权重最大，后续层权重递减
+        layer_weight = 1.0 / ((layer_idx * 0.5) + 1)  # 修改：调整层级权重策略
 
         # 总损失 = InfoNCE损失 + 正样本对相似度损失
         total_loss = (loss + 0.5 * positive_sim_loss) * self.alignment_weight * layer_weight
@@ -159,14 +159,10 @@ class TagPredictionLoss(nn.Module):
         # 根据是否使用焦点损失选择不同的损失计算方式
         if self.use_focal_loss:
             # 获取当前层的焦点损失参数，对深层使用更高的gamma值
-            gamma = self.focal_params.get(f'gamma_{layer_idx}', self.focal_params.get('gamma', 2.0))
-            alpha = self.focal_params.get(f'alpha_{layer_idx}', self.focal_params.get('alpha', 0.25))
-
-            # 层索引越大，gamma越大，关注更难的样本
-            gamma = gamma * (1 + 0.3 * layer_idx)
+            gamma = self.focal_params.get(f'gamma_{layer_idx}', self.focal_params.get('gamma', 2.0)) * (1 + 0.35 * layer_idx)
 
             # 较小的类别平衡因子，避免过度补偿
-            alpha = max(0.1, alpha - 0.05 * layer_idx)
+            alpha = max(0.08, self.focal_params.get(f'alpha_{layer_idx}', self.focal_params.get('alpha', 0.25)) - 0.06 * layer_idx)
 
             # 如果有类别频率统计，则使用动态权重
             if self.class_counts is not None and layer_idx in self.class_counts:
@@ -209,7 +205,7 @@ class TagPredictionLoss(nn.Module):
                     loss = self._focal_loss_with_smoothing(valid_logits, valid_targets, gamma, alpha)
         else:
             # 使用标准交叉熵损失，但添加标签平滑和正则化
-            label_smoothing = min(0.2, 0.05 + layer_idx * 0.05)  # 深层使用更多平滑
+            label_smoothing = min(0.25, 0.05 + layer_idx * 0.06)  # 深层使用更多平滑
 
             # 应用L2正则化
             weight_decay = 0.01 * (1 + layer_idx * 0.5)  # 随层数增加而增大
@@ -252,7 +248,9 @@ class TagPredictionLoss(nn.Module):
 
         # 应用标签平滑
         if self.use_label_smoothing and logits.requires_grad:
-            smoothing = min(0.2, self.label_smoothing_alpha * (gamma / 2.0))  # 根据gamma调整平滑度
+            # 根据类别数量调整平滑度 - 类别越多，平滑度越高
+            class_factor = min(0.3, 0.05 * (num_classes / 100))  # 类别数量影响因子
+            smoothing = min(0.25, self.label_smoothing_alpha + gamma * 0.015 + class_factor) # 调整 gamma 影响因子
             one_hot = one_hot * (1 - smoothing) + smoothing / num_classes
 
         # 计算焦点损失
@@ -289,7 +287,7 @@ class TagPredictionLoss(nn.Module):
         if self.use_label_smoothing and logits.requires_grad:
             # 根据类别数量调整平滑度 - 类别越多，平滑度越高
             class_factor = min(0.3, 0.05 * (num_classes / 100))  # 类别数量影响因子
-            smoothing = min(0.25, self.label_smoothing_alpha + gamma * 0.01 + class_factor)
+            smoothing = min(0.25, self.label_smoothing_alpha + gamma * 0.015 + class_factor) # 调整 gamma 影响因子
             one_hot = one_hot * (1 - smoothing) + smoothing / num_classes
 
         # 获取每个样本对应类别的权重
@@ -301,7 +299,7 @@ class TagPredictionLoss(nn.Module):
 
         # 针对类别数量多的情况，调整gamma值
         # 类别数量越多，gamma值越大，更关注难分类样本
-        adjusted_gamma = gamma * (1.0 + 0.2 * min(1.0, num_classes / 200))
+        adjusted_gamma = gamma * (1.0 + 0.25 * min(1.0, num_classes / 250)) # 调整 num_classes 影响因子
         focal_weight = ((1 - pt) ** adjusted_gamma)
 
         # 应用样本权重和焦点权重
@@ -320,7 +318,7 @@ class TagPredictionLoss(nn.Module):
             # 鼓励预测分布更加均匀，避免过度自信
             uniform = torch.ones_like(probs) / num_classes
             kl_div = F.kl_div(torch.log(probs + 1e-8), uniform, reduction='batchmean')
-            reg_weight = min(0.1, 0.01 * (num_classes / 100))  # 根据类别数量调整权重
+            reg_weight = min(0.12, 0.015 * (num_classes / 100))  # 根据类别数量调整权重
             return focal_loss.mean() + reg_weight * kl_div
 
         return focal_loss.mean()
