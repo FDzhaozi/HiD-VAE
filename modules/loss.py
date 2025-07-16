@@ -76,14 +76,11 @@ class TagAlignmentLoss(nn.Module):
         labels = torch.arange(batch_size, device=codebook_emb.device)
         loss = F.cross_entropy(logits, labels)
 
-        # 额外计算正样本对的相似度，鼓励它更高
-        positive_sim_loss = (1.0 - positive_logits).mean()
-
         # 根据层索引调整权重
         layer_weight = 1.0 / ((layer_idx * 0.5) + 1)  # 修改：调整层级权重策略
 
-        # 总损失 = InfoNCE损失 + 正样本对相似度损失
-        total_loss = (loss + 0.5 * positive_sim_loss) * self.alignment_weight * layer_weight
+        # 总损失 = InfoNCE损失。之前包含一个可能为负的项，现已移除。
+        total_loss = loss * self.alignment_weight * layer_weight
 
         return total_loss
 

@@ -20,10 +20,12 @@ def parse_gz(path):
 root_path = Path(__file__).parent.parent
 raw_path = root_path / "dataset" / "amazon" / "raw" / "beauty"
 processed_path = root_path / "dataset" / "amazon" / "processed"
+processed_path_kuairand = root_path / "dataset" / "kuairand" / "processed"
 class BeautyDatasetViewer:
     def __init__(self, raw_path=raw_path, processed_path=processed_path):
         self.raw_path = Path(raw_path)
         self.processed_path = Path(processed_path)
+        self.processed_path_kuairand = Path(processed_path_kuairand)
     
     def view_raw_files(self):
         """显示原始数据文件列表及其大小"""
@@ -143,7 +145,8 @@ class BeautyDatasetViewer:
         print("\n=== 处理后的数据 (data.pt) ===")
         try:
             # 尝试使用 weights_only=False 加载数据
-            loaded_data = torch.load(self.processed_path / "title_data_beauty_5tags.pt", weights_only=False)
+            #loaded_data = torch.load(self.processed_path / "title_data_beauty_5tags.pt", weights_only=False)
+            loaded_data = torch.load(self.processed_path_kuairand / "title_data_kuairand_5tags.pt", weights_only=False)
             
             # 处理数据可能是列表的情况
             if isinstance(loaded_data, list):
@@ -180,6 +183,33 @@ class BeautyDatasetViewer:
                                 print(f"      样本3: {data[key][subkey][2]}")
                                 print(f"      样本4: {data[key][subkey][3]}")
                                 print(f"      样本5: {data[key][subkey][4]}")
+                                
+                                # 新增：计算并显示各层标签的类别个数
+                                print("\n      === 各层标签类别统计 ===")
+                                tags_indices = data[key][subkey]
+                                n_layers = tags_indices.shape[1]
+                                for layer in range(n_layers):
+                                    # 获取当前层的唯一标签数量
+                                    unique_tags = torch.unique(tags_indices[:, layer])
+                                    print(f"      第{layer+1}层标签类别数: {len(unique_tags)}")
+                                    # 显示最小和最大的标签索引
+                                    if len(unique_tags) > 0:
+                                        print(f"      第{layer+1}层标签索引范围: {unique_tags.min().item()} 到 {unique_tags.max().item()}")
+                                    
+                                    # 显示标签分布情况
+                                    tag_counts = {}
+                                    for tag in tags_indices[:, layer]:
+                                        tag_val = tag.item()
+                                        tag_counts[tag_val] = tag_counts.get(tag_val, 0) + 1
+                                    
+                                    # 显示出现频率最高的前5个标签
+                                    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+                                    print(f"      第{layer+1}层出现频率最高的标签: ", end="")
+                                    for tag_val, count in sorted_tags[:5]:
+                                        print(f"{tag_val}({count}次) ", end="")
+                                    print()
+                                
+                                print("      === 标签类别统计结束 ===\n")
                             else:
                                 # 向量只取前5个元素
                                 print(f"      示例1: {data[key][subkey][:5]}")
@@ -194,9 +224,13 @@ class BeautyDatasetViewer:
                                 print(f"      第{i+1}层映射示例: {items}")
                         else:
                             print(f"      类型: {type(data[key][subkey])}")
-                            print(f"      长度: {len(data[key][subkey])}")
-                            print(f"      示例1: {data[key][subkey][0]}")
-                            print(f"      示例2: {data[key][subkey][1]}")
+                            # 对于布尔类型，直接打印值，不尝试获取长度
+                            if isinstance(data[key][subkey], bool):
+                                print(f"      值: {data[key][subkey]}")
+                            else:
+                                print(f"      长度: {len(data[key][subkey])}")
+                                print(f"      示例1: {data[key][subkey][0]}")
+                                print(f"      示例2: {data[key][subkey][1]}")
                 elif isinstance(data[key], dict):
                     print("  子键值:")
                     for subkey in data[key].keys():
@@ -281,7 +315,8 @@ class BeautyDatasetViewer:
         print("\n=== 重映射标签索引 ===")
         try:
             # 加载处理后的数据
-            data_path = self.processed_path / "title_data_beauty_5tags.pt"
+            #data_path = self.processed_path / "title_data_sports_5tags.pt"
+            data_path = self.processed_path_kuairand / "title_data_kuairand_5tags.pt"
             print(f"正在加载数据: {data_path}")
             loaded_data = torch.load(data_path, weights_only=False)
             

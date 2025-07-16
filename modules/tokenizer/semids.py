@@ -188,7 +188,7 @@ if __name__ == "__main__":
                         help='码本大小')
     parser.add_argument('--n_cat_feats', type=int, default=18,
                         help='分类特征数量 (ml-1m: 18, beauty: 0)')
-    parser.add_argument('--use_dedup_dim', action='store_true', default=False,
+    parser.add_argument('--use_dedup_dim', action='store_true', default=True,
                         help='是否使用去重维度 ')
     parser.add_argument('--no_dedup_dim', dest='use_dedup_dim', action='store_false',
                         help='不使用去重维度')

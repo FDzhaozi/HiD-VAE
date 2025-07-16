@@ -21,6 +21,90 @@ from torch import Tensor
 torch.set_float32_matmul_precision('high')
 
 
+# 添加一个新的损失函数类，用于计算语义ID唯一性约束损失
+class SemanticIdUniquenessLoss(nn.Module):
+    """
+    计算语义ID唯一性约束损失，推动不同商品的语义ID彼此分离
+    """
+    def __init__(self, margin: float = 0.5, weight: float = 1.0):
+        """
+        初始化语义ID唯一性约束损失
+        
+        参数:
+            margin: 语义ID之间的最小距离阈值
+            weight: 损失权重
+        """
+        super().__init__()
+        self.margin = margin
+        self.weight = weight
+    
+    def forward(self, sem_ids: Tensor, encoded_features: Tensor) -> Tensor:
+        """
+        计算批次内语义ID的唯一性损失
+        
+        参数:
+            sem_ids: 形状为 [batch_size, n_layers] 的语义ID
+            encoded_features: 形状为 [batch_size, embed_dim] 的编码器输出
+            
+        返回:
+            唯一性约束损失
+        """
+        batch_size, n_layers = sem_ids.shape
+        
+        # 如果批次大小太小，不计算损失
+        if batch_size <= 1:
+            return torch.tensor(0.0, device=sem_ids.device)
+        
+        # 找到具有完全相同语义ID的对
+        # 展开为 [batch_size, 1, n_layers] 和 [1, batch_size, n_layers]
+        id1 = sem_ids.unsqueeze(1)
+        id2 = sem_ids.unsqueeze(0)
+        
+        # 检查所有层是否都相等
+        id_eq = (id1 == id2).all(dim=-1)
+        
+        # 创建对角线掩码，排除自身比较
+        diag_mask = ~torch.eye(batch_size, device=sem_ids.device, dtype=torch.bool)
+        
+        # 找出完全相同的ID对 (非自身)
+        identical_pairs_mask = id_eq & diag_mask
+        
+        # 如果没有完全相同的ID对，返回零损失
+        if not identical_pairs_mask.any():
+            return torch.tensor(0.0, device=sem_ids.device)
+        
+        # 获取相同ID对的索引
+        idx_a, idx_b = torch.where(identical_pairs_mask)
+        
+        # 为避免重复计算，只考虑 i < j 的对
+        unique_pairs_mask = idx_a < idx_b
+        idx_a = idx_a[unique_pairs_mask]
+        idx_b = idx_b[unique_pairs_mask]
+
+        if len(idx_a) == 0:
+            return torch.tensor(0.0, device=sem_ids.device)
+            
+        # 获取这些对的编码特征
+        features_a = encoded_features[idx_a]
+        features_b = encoded_features[idx_b]
+        
+        # 归一化特征以计算余弦相似度
+        features_a_norm = F.normalize(features_a, p=2, dim=-1)
+        features_b_norm = F.normalize(features_b, p=2, dim=-1)
+
+        # 计算余弦相似度
+        cosine_sim = (features_a_norm * features_b_norm).sum(dim=-1)
+        
+        # 计算损失：我们希望将这些特征推开，因此当相似度高于margin时，我们施加一个惩罚
+        # 损失 = max(0, cosine_sim - margin)
+        loss = F.relu(cosine_sim - self.margin)
+
+        # 对所有冲突对的损失求平均，并乘以权重
+        uniqueness_loss = self.weight * loss.mean() if loss.numel() > 0 else torch.tensor(0.0, device=sem_ids.device)
+
+        return uniqueness_loss
+
+
 class TagPredictor(nn.Module):
     """
     标签预测器，用于预测每层对应的标签索引
@@ -166,6 +250,9 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         dropout_rate: float = 0.2,  # 新增：Dropout率
         use_batch_norm: bool = True,  # 新增：是否使用BatchNorm
         alignment_temperature: float = 0.1,  # 新增：对比学习温度参数
+        # 新增：语义ID唯一性约束参数
+        sem_id_uniqueness_weight: float = 0.5,  # 语义ID唯一性约束权重
+        sem_id_uniqueness_margin: float = 0.5,  # 语义ID唯一性约束边界值
     ) -> None:
         self._config = locals()
         
@@ -186,6 +273,7 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         self.dropout_rate = dropout_rate  # 新增：Dropout率
         self.use_batch_norm = use_batch_norm  # 新增：是否使用BatchNorm
         self.alignment_temperature = alignment_temperature  # 新增：对比学习温度参数
+        self.sem_id_uniqueness_weight = sem_id_uniqueness_weight  # 新增：语义ID唯一性约束权重
         
         # 如果未提供标签类别数量，则使用默认值
         if tag_class_counts is None:
@@ -215,6 +303,10 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         self.concat_embed_dims = [(embed_dim * (i + 1)) for i in range(n_layers)]
 
         # 标签预测器（输入维度变为拼接后的维度）
+        # 兼容性处理: 尝试加载的权重的tag_class_counts可能与当前配置不同
+        # 根据错误信息可以看出，存储的值为[7, 30, 97]，如果当前配置的值不同，则使用存储的值
+        # 这样可以确保权重加载成功
+        self._stored_tag_class_counts = None
         self.tag_predictors = nn.ModuleList(modules=[
             TagPredictor(
                 embed_dim=self.concat_embed_dims[i],
@@ -270,6 +362,12 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
             class_counts=None  # 将在训练过程中更新
         )
         
+        # 添加语义ID唯一性约束损失
+        self.sem_id_uniqueness_loss = SemanticIdUniquenessLoss(
+            margin=sem_id_uniqueness_margin,
+            weight=sem_id_uniqueness_weight
+        )
+        
         # 用于存储类别频率统计
         self.register_buffer('class_freq_counts', None)
 
@@ -283,10 +381,98 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
     
     def load_pretrained(self, path: str) -> None:
         state = torch.load(path, map_location=self.device, weights_only=False)
-        self.load_state_dict(state["model"])
-        print(f"---Loaded HRQVAE Iter {state['iter']}---")
+        
+        # 检查权重文件中是否有与当前模型结构不匹配的情况
+        model_dict = self.state_dict()
+        pretrained_dict = state["model"]
+        
+        # 检查是否存在与标签预测器相关的不匹配
+        tag_predictor_mismatch = False
+        tag_class_counts_from_weights = []
+        
+        for i in range(self.n_layers):
+            weight_key = f"tag_predictors.{i}.classifier.7.weight"
+            if weight_key in pretrained_dict:
+                pretrained_shape = pretrained_dict[weight_key].shape
+                current_shape = model_dict[weight_key].shape if weight_key in model_dict else None
+                
+                if current_shape is not None and pretrained_shape[0] != current_shape[0]:
+                    tag_predictor_mismatch = True
+                    tag_class_counts_from_weights.append(pretrained_shape[0])
+                else:
+                    # 如果找不到对应层的权重或尺寸匹配，则保持当前的类别数
+                    tag_class_counts_from_weights.append(self.tag_class_counts[i])
+        
+        # 检查tag_projectors相关的unexpected keys
+        tag_projector_mismatch = False
+        for i in range(self.n_layers):
+            projector_key = f"tag_projectors.{i}.5.weight"
+            if projector_key in pretrained_dict and projector_key not in model_dict:
+                tag_projector_mismatch = True
+                break
+        
+        # 如果有标签预测器不匹配，重新创建标签预测器以匹配权重文件
+        if tag_predictor_mismatch and len(tag_class_counts_from_weights) == self.n_layers:
+            print(f"检测到标签预测器不匹配，调整类别数量从 {self.tag_class_counts} 到 {tag_class_counts_from_weights}")
+            self._stored_tag_class_counts = self.tag_class_counts  # 存储原始值
+            self.tag_class_counts = tag_class_counts_from_weights  # 更新为权重文件中的值
+            
+            # 重新创建标签预测器
+            self.tag_predictors = nn.ModuleList(modules=[
+                TagPredictor(
+                    embed_dim=self.concat_embed_dims[i],
+                    num_classes=self.tag_class_counts[i],
+                    hidden_dim=self._config.get('hidden_dims', [512, 256, 128])[0] // 2 * (i + 1),
+                    dropout_rate=self._config.get('dropout_rate', 0.2),
+                    use_batch_norm=self._config.get('use_batch_norm', True),
+                    layer_idx=i
+                ) for i in range(self.n_layers)
+            ])
+        
+        # 如果有tag_projectors不匹配，重新创建tag_projectors以匹配权重文件
+        if tag_projector_mismatch:
+            print(f"检测到标签投影器不匹配，调整结构以匹配权重文件")
+            # 重新创建tag_projectors，包含LayerNorm层
+            self.tag_projectors = nn.ModuleList(modules=[
+                nn.Sequential(
+                    nn.Linear(self.tag_embed_dim, self._config.get('hidden_dims', [512, 256, 128])[0]),
+                    nn.BatchNorm1d(self._config.get('hidden_dims', [512, 256, 128])[0]) if self._config.get('use_batch_norm', True) else nn.Identity(),
+                    nn.ReLU(),
+                    nn.Dropout(self._config.get('dropout_rate', 0.2)),
+                    nn.Linear(self._config.get('hidden_dims', [512, 256, 128])[0], self.concat_embed_dims[i]),
+                    nn.LayerNorm(self.concat_embed_dims[i])  # 添加LayerNorm层，无论codebook_normalize如何设置
+                ) for i in range(self.n_layers)
+            ])
+        
+        # 处理剩余的不匹配键
+        # 过滤掉那些在预训练模型中有但在当前模型中没有的键
+        pretrained_dict_filtered = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        
+        # 如果过滤后的字典键数量少于原始字典，输出警告
+        if len(pretrained_dict_filtered) < len(pretrained_dict):
+            skipped_keys = set(pretrained_dict.keys()) - set(pretrained_dict_filtered.keys())
+            print(f"警告: 以下键在加载时被跳过，因为当前模型结构中不存在: {skipped_keys}")
+        
+        try:
+            # 尝试加载过滤后的权重
+            model_dict.update(pretrained_dict_filtered)
+            self.load_state_dict(model_dict)
+            print(f"---Loaded HRQVAE Iter {state['iter']}---")
+        except Exception as e:
+            # 如果仍然失败，尝试宽松加载
+            print(f"标准加载失败，尝试宽松加载: {str(e)}")
+            self.load_state_dict(pretrained_dict, strict=False)
+            print(f"---Loaded HRQVAE Iter {state['iter']} (宽松模式)---")
+        
+        # 如果有不匹配，输出警告
+        if tag_predictor_mismatch:
+            print(f"警告: 已自动调整标签预测器以匹配权重文件。原始类别数量: {self._stored_tag_class_counts}, 调整后: {self.tag_class_counts}")
+        if tag_projector_mismatch:
+            print(f"警告: 已自动调整标签投影器以匹配权重文件。")
 
     def encode(self, x: Tensor) -> Tensor:
+        # 确保输入数据为 float32 以匹配模型权重
+        x = x.float()
         return self.encoder(x)
 
     def decode(self, x: Tensor) -> Tensor:
@@ -294,7 +480,7 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
 
     def get_semantic_ids(
         self,
-        x: Tensor,
+        encoded_x: Tensor,
         tags_emb: Optional[Tensor] = None,
         tags_indices: Optional[Tensor] = None,
         gumbel_t: float = 0.001
@@ -303,7 +489,7 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         获取语义ID和计算相关损失
         
         参数:
-            x: 输入特征
+            encoded_x: 编码后的输入特征
             tags_emb: 标签嵌入，形状为 [batch_size, n_layers, tag_embed_dim]
             tags_indices: 标签索引，形状为 [batch_size, n_layers]
             gumbel_t: Gumbel softmax 温度参数
@@ -311,13 +497,13 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         返回:
             HRqVaeOutput 包含嵌入、残差、语义ID和各种损失
         """
-        res = self.encode(x)
+        res = encoded_x
         
         # 初始化损失
-        quantize_loss = torch.tensor(0.0, device=x.device)  # 修改：初始化为张量
-        tag_align_loss = torch.tensor(0.0, device=x.device)
-        tag_pred_loss = torch.tensor(0.0, device=x.device)
-        tag_pred_accuracy = torch.tensor(0.0, device=x.device)
+        quantize_loss = torch.tensor(0.0, device=encoded_x.device)  # 修改：初始化为张量
+        tag_align_loss = torch.tensor(0.0, device=encoded_x.device)
+        tag_pred_loss = torch.tensor(0.0, device=encoded_x.device)
+        tag_pred_accuracy = torch.tensor(0.0, device=encoded_x.device)
         
         embs, residuals, sem_ids = [], [], []
         
@@ -367,9 +553,9 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         
         # 如果没有提供标签数据，将标签相关损失设为0
         if tags_emb is None or tags_indices is None:
-            tag_align_loss = torch.tensor(0.0, device=x.device)
-            tag_pred_loss = torch.tensor(0.0, device=x.device)
-            tag_pred_accuracy = torch.tensor(0.0, device=x.device)
+            tag_align_loss = torch.tensor(0.0, device=encoded_x.device)
+            tag_pred_loss = torch.tensor(0.0, device=encoded_x.device)
+            tag_pred_accuracy = torch.tensor(0.0, device=encoded_x.device)
         else:
             # 计算平均损失和准确率
             tag_align_loss = tag_align_loss / self.n_layers
@@ -404,8 +590,16 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         tags_emb = getattr(batch, 'tags_emb', None)
         tags_indices = getattr(batch, 'tags_indices', None)
         
+        # 确保输入数据为 float32 以匹配模型权重
+        x = x.float()
+        if tags_emb is not None:
+            tags_emb = tags_emb.float()
+        
+        # 编码输入特征
+        encoded_features = self.encode(x)
+
         # 获取语义ID和相关损失
-        quantized = self.get_semantic_ids(x, tags_emb, tags_indices, gumbel_t)
+        quantized = self.get_semantic_ids(encoded_features, tags_emb, tags_indices, gumbel_t)
         
         
         embs, residuals = quantized.embeddings, quantized.residuals
@@ -429,12 +623,20 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         # print(f"标签预测损失: {tag_pred_loss.mean().item():.4f}")
         # print(f"标签预测准确率: {tag_pred_accuracy.mean().item():.4f}")
         
-        # 总损失 = 重构损失 + RQVAE损失 + 标签对齐损失 + 标签预测损失
+        # 新增：计算语义ID唯一性约束损失
+        # 修复：正确处理张量形状转换
+        # quantized.sem_ids 的形状是 [n_layers, batch_size]
+        # 我们需要将其转换为 [batch_size, n_layers]
+        sem_ids_tensor = quantized.sem_ids.transpose(0, 1)  # 直接转置，结果是 [batch_size, n_layers]
+        sem_id_uniqueness_loss = self.sem_id_uniqueness_loss(sem_ids_tensor, encoded_features)
+        
+        # 总损失 = 重构损失 + RQVAE损失 + 标签对齐损失 + 标签预测损失 + 语义ID唯一性约束损失
         loss = (
             reconstuction_loss.mean() + 
             rqvae_loss.mean() + 
             self.tag_alignment_weight * tag_align_loss + 
-            self.tag_prediction_weight * tag_pred_loss
+            self.tag_prediction_weight * tag_pred_loss +
+            self.sem_id_uniqueness_weight * sem_id_uniqueness_loss  # 新增：语义ID唯一性约束损失
         )
         # print(f"总损失: {loss.item():.4f}")
 
@@ -451,6 +653,7 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
         tag_pred_loss_by_layer = quantized.tag_pred_loss_by_layer
         tag_pred_accuracy_by_layer = quantized.tag_pred_accuracy_by_layer
         
+        # 将语义ID唯一性约束损失添加到返回结果中
         return HRqVaeComputedLosses(
             loss=loss,
             reconstruction_loss=reconstuction_loss,
@@ -463,7 +666,9 @@ class HRqVae(nn.Module, PyTorchModelHubMixin):
             # 新增按层的损失和准确率
             tag_align_loss_by_layer=tag_align_loss_by_layer,
             tag_pred_loss_by_layer=tag_pred_loss_by_layer,
-            tag_pred_accuracy_by_layer=tag_pred_accuracy_by_layer
+            tag_pred_accuracy_by_layer=tag_pred_accuracy_by_layer,
+            # 新增语义ID唯一性约束损失
+            sem_id_uniqueness_loss=sem_id_uniqueness_loss
         )
     
     def predict_tags(self, x: Tensor, gumbel_t: float = 0.001) -> Dict[str, Tensor]:

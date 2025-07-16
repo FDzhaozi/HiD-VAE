@@ -73,6 +73,8 @@ class HRqVaeComputedLosses(NamedTuple):
     tag_align_loss_by_layer: Tensor = None
     tag_pred_loss_by_layer: Tensor = None
     tag_pred_accuracy_by_layer: Tensor = None
+    # 新增语义ID唯一性约束损失
+    sem_id_uniqueness_loss: Tensor = None
 
 
 from typing import Optional, List, Dict, Any, Union

@@ -15,7 +15,7 @@ from data.utils import cycle
 from data.utils import next_batch
 from modules.h_rqvae import HRqVae
 from modules.quantize import QuantizeForwardMode
-from modules.tokenizer.semids import SemanticIdTokenizer
+from modules.tokenizer.h_semids import HSemanticIdTokenizer
 from torch.optim import AdamW
 from torch.optim import lr_scheduler
 from torch.utils.data import BatchSampler
@@ -34,6 +34,33 @@ logging.getLogger("torch._inductor.utils").setLevel(logging.ERROR)
 # 设置 torch._dynamo 的警告
 torch._dynamo.config.verbose = False
 torch._dynamo.config.suppress_errors = True
+
+# 新增：计算ID重复率的函数
+def calculate_repetition_rate(item_ids: torch.Tensor):
+    """
+    计算ID重复率
+    
+    参数:
+        item_ids: 形状为 [num_items, id_dim] 的ID张量
+        
+    返回:
+        repetition_rate: 重复率
+        num_unique_items: 唯一ID数量
+        total_items: 总ID数量
+    """
+    if item_ids is None or item_ids.nelement() == 0:
+        return 0.0, 0, 0
+    
+    # 使用 PyTorch 的 unique 函数计算唯一行及其计数
+    unique_ids, inverse_indices, counts = torch.unique(item_ids, dim=0, return_inverse=True, return_counts=True)
+    num_unique_items = unique_ids.shape[0]
+    total_items = item_ids.shape[0]
+    
+    if total_items == 0:
+        return 0.0, 0, 0
+    
+    repetition_rate = 1.0 - (num_unique_items / total_items)
+    return repetition_rate, num_unique_items, total_items
 
 @gin.configurable
 def train(
@@ -97,6 +124,14 @@ def train(
     lr_scheduler_gamma=0.5, # For StepLR: Multiplicative factor of learning rate decay
     lr_scheduler_factor=0.5, # For ReduceLROnPlateau: Factor by which the learning rate will be reduced
     lr_scheduler_patience=10, # For ReduceLROnPlateau: Number of epochs with no improvement after which learning rate will be reduced
+    # 新增: 语义ID唯一性约束参数
+    sem_id_uniqueness_weight=0.5,  # 语义ID唯一性约束权重
+    sem_id_uniqueness_margin=0.5,  # 语义ID唯一性约束边界值
+    # 新增: ID重复率阈值
+    id_repetition_threshold=0.03,  # ID重复率阈值，低于此值才保存模型
+    # 新增: Tokenizer模式参数
+    use_concatenated_ids: bool = True,
+    use_interleaved_ids: bool = False,
 ):
     # 设置日志记录
     # 创建图表保存目录
@@ -155,7 +190,6 @@ def train(
     )
     
     best_eval_accuracy = 0.0
-    best_model_path = None
     
     # 记录训练参数
     if accelerator.is_main_process:
@@ -168,17 +202,34 @@ def train(
     device = accelerator.device
 
     # 加载带有标签数据的数据集
-    train_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=force_dataset_process, train_test_split="train" if do_eval else "all", split=dataset_split)
+    if dataset == RecDataset.KUAIRAND:
+        # KuaiRand数据集不接受split参数
+        train_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=force_dataset_process, train_test_split="train" if do_eval else "all")
+    else:
+        # 其他数据集接受split参数
+        train_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=force_dataset_process, train_test_split="train" if do_eval else "all", split=dataset_split)
+    
     train_sampler = BatchSampler(RandomSampler(train_dataset), batch_size, False)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=None, collate_fn=lambda batch: batch)
     train_dataloader = cycle(train_dataloader)
 
     if do_eval:
-        eval_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="eval", split=dataset_split)
+        if dataset == RecDataset.KUAIRAND:
+            # KuaiRand数据集不接受split参数
+            eval_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="eval")
+        else:
+            # 其他数据集接受split参数
+            eval_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="eval", split=dataset_split)
+        
         eval_sampler = BatchSampler(RandomSampler(eval_dataset), batch_size, False)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=None, collate_fn=lambda batch: batch)
 
-    index_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="all", split=dataset_split) if do_eval else train_dataset
+    if dataset == RecDataset.KUAIRAND:
+        # KuaiRand数据集不接受split参数
+        index_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="all") if do_eval else train_dataset
+    else:
+        # 其他数据集接受split参数
+        index_dataset = ItemData(root=dataset_folder, dataset=dataset, force_process=False, train_test_split="all", split=dataset_split) if do_eval else train_dataset
     
     train_dataloader = accelerator.prepare(train_dataloader)
 
@@ -364,6 +415,8 @@ def train(
         
         # 导出稀有标签ID到PT文件
         rare_tags_path = os.path.join(save_dir_root+"special_tags_files", "rare_tags.pt")
+        # 确保目录存在
+        os.makedirs(os.path.dirname(rare_tags_path), exist_ok=True)
         torch.save(rare_tags_dict, rare_tags_path)
         logger.info(f"稀有标签ID已保存到: {rare_tags_path}")
         
@@ -435,6 +488,9 @@ def train(
         
         logger.info("标签类别频率统计和稀有标签处理完成")
     
+        # 将类别频率统计信息传递给模型，以便标签预测损失可以使用类别权重
+        class_counts_tensor_dict = {k: v.to(device) for k, v in class_counts_dict.items()}
+
     # 创建HRQVAE模型
     model = HRqVae(
         input_dim=vae_input_dim,
@@ -457,8 +513,15 @@ def train(
         # 新增参数
         dropout_rate=dropout_rate,
         use_batch_norm=use_batch_norm,
-        alignment_temperature=alignment_temperature
+        alignment_temperature=alignment_temperature,
+        # 新增语义ID唯一性约束参数
+        sem_id_uniqueness_weight=sem_id_uniqueness_weight,
+        sem_id_uniqueness_margin=sem_id_uniqueness_margin
     )
+
+    # 如果启用了焦点损失并且已经计算类别频率，则更新模型中的类别计数
+    if use_focal_loss and 'class_counts_tensor_dict' in locals():
+        model.update_class_counts(class_counts_tensor_dict)
 
     # 设置标签预测损失函数的参数
     if hasattr(model, 'tag_prediction_loss'):
@@ -525,7 +588,7 @@ def train(
         logger.info(f"  tag_prediction_weight: {tag_prediction_weight}")
         logger.info(f" len(train_dataset): {len(train_dataset)}")
 
-        # 打印编码器结构
+    # 打印编码器结构
     logger.info("=== 编码器结构 ===")
     for name, param in model.encoder.named_parameters():
         logger.info(f"{name}: {param.shape}")
@@ -594,20 +657,27 @@ def train(
         scheduler = accelerator.prepare(scheduler)
 
     # 创建语义ID分词器
-    tokenizer = SemanticIdTokenizer(
+    tokenizer = HSemanticIdTokenizer(
         input_dim=vae_input_dim,
-        hidden_dims=vae_hidden_dims,
         output_dim=vae_embed_dim,
+        hidden_dims=vae_hidden_dims,
         codebook_size=vae_codebook_size,
         n_layers=vae_n_layers,
         n_cat_feats=vae_n_cat_feats,
-        rqvae_weights_path=pretrained_hrqvae_path,
-        rqvae_codebook_normalize=vae_codebook_normalize,
-        rqvae_sim_vq=vae_sim_vq
+        hrqvae_weights_path=pretrained_hrqvae_path,
+        hrqvae_codebook_normalize=vae_codebook_normalize,
+        hrqvae_sim_vq=vae_sim_vq,
+        tag_alignment_weight=tag_alignment_weight,
+        tag_prediction_weight=tag_prediction_weight,
+        tag_class_counts=tag_class_counts,
+        tag_embed_dim=tag_embed_dim,
+        use_concatenated_ids=use_concatenated_ids,
+        use_interleaved_ids=use_interleaved_ids,
+        commitment_weight=commitment_weight,
     )
-    tokenizer.rq_vae = model
+    tokenizer.hrq_vae = accelerator.unwrap_model(model)
 
-    with tqdm(initial=start_iter, total=start_iter+iterations,
+    with tqdm(initial=start_iter, total=start_iter+1+iterations,
               disable=not accelerator.is_main_process) as pbar:
         losses = [[], [], [], [], [], []]  # 总损失, 重构损失, RQVAE损失, 标签对齐损失, 标签预测损失, 标签预测准确率
         # 新增按层记录的损失
@@ -1041,69 +1111,14 @@ def train(
                             eval_layer_acc_str = ", ".join([f"层{i}: {acc.cpu().item():.4f}" for i, acc in enumerate(eval_model_output.tag_pred_accuracy_by_layer)])
                             logger.info(f"评估 - 每层标签预测准确率: {eval_layer_acc_str}")
 
-                    # 新的模型保存逻辑：只保存最佳模型
+                    # 新的模型保存逻辑：只保存准确率超过70%且语义ID重复率低于阈值的模型
                     current_eval_accuracy = eval_losses[5]  # eval_tag_pred_accuracy
                     current_rqvae_loss = eval_losses[2]   # eval_rqvae_loss
 
-                    if current_eval_accuracy > best_eval_accuracy:
-                        best_eval_accuracy = current_eval_accuracy
-                        logger.info(f"新的最佳模型！准确率: {best_eval_accuracy:.4f}, RQVAE损失: {current_rqvae_loss:.4f}")
-
-                        # 删除旧的最佳模型 (如果存在)
-                        if best_model_path and os.path.exists(best_model_path):
-                            try:
-                                os.remove(best_model_path)
-                                logger.info(f"已删除旧的最佳模型: {best_model_path}")
-                            except OSError as e:
-                                logger.error(f"删除旧的最佳模型失败: {e}")
-                        
-                        # 保存新的最佳模型
-                        model_save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        
-                        # 确保保存目录存在 (save_dir 在函数开头定义)
-                        if not os.path.exists(save_dir):
-                            os.makedirs(save_dir)
-
-                        new_best_model_filename = f"hrqvae_best_model_ACC{best_eval_accuracy:.4f}_RQLOSS{current_rqvae_loss:.4f}_{model_save_timestamp}.pt"
-                        new_best_model_path = os.path.join(save_dir, new_best_model_filename)
-                        
-                        unwrapped_model = accelerator.unwrap_model(model)
-                        state = {
-                            "iter": iter + 1,
-                            "model": unwrapped_model.state_dict(),
-                            "model_config": unwrapped_model.config,
-                            "optimizer": optimizer.state_dict(),
-                            "accuracy": best_eval_accuracy,
-                            "rqvae_loss": current_rqvae_loss
-                        }
-                        
-                        accelerator.save(state, new_best_model_path)
-                        best_model_path = new_best_model_path
-                        logger.info(f"最佳模型已保存到: {best_model_path}")
-                    else:
-                        logger.info(f"当前评估准确率 {current_eval_accuracy:.4f} 未超过最佳准确率 {best_eval_accuracy:.4f}")
-            # 原有的周期性保存逻辑已移除
-            # # 保存模型
-            # if accelerator.is_main_process:
-            #     if (iter+1) % save_model_every == 0 or iter+1 == iterations:
-            #         state = {
-            #             "iter": iter,
-            #             "model": model.state_dict(),
-            #             "model_config": model.config,
-            #             "optimizer": optimizer.state_dict()
-            #         }
-
-            #         if not os.path.exists(save_dir_root):
-            #             os.makedirs(save_dir_root)
-
-            #         save_path = save_dir_root + f"hrqvae_checkpoint_{iter}.pt"
-            #         torch.save(state, save_path)
-            #         logger.info(f"保存模型检查点到: {save_path}")
-                    
-                # 计算ID多样性指标
-                if (iter+1) % eval_every == 0 or iter+1 == iterations:
+                    # 先计算ID多样性指标，确保sem_repetition_rate变量已定义
                     tokenizer.reset()
                     model.eval()
+                    tokenizer.hrq_vae = accelerator.unwrap_model(model) #确保tokenizer用的是最新的模型
 
                     corpus_ids = tokenizer.precompute_corpus_ids(index_dataset)
                     max_duplicates = corpus_ids[:,-1].max() / corpus_ids.shape[0]
@@ -1123,6 +1138,12 @@ def train(
                         
                         # 收集码本使用率数据用于绘图
                         plot_data['codebook_usage'][cid].append(usage)
+                    
+                    # 新增：计算并打印语义ID部分的重复率
+                    # 只取前vae_n_layers维度（语义ID部分）
+                    semantic_ids = corpus_ids[:, :vae_n_layers]
+                    sem_repetition_rate, sem_unique_items, sem_total_items = calculate_repetition_rate(semantic_ids)
+                    logger.info(f"仅语义ID部分的重复率: {sem_repetition_rate:.4f} ({sem_unique_items} unique / {sem_total_items} total)")
 
                     plot_data['rqvae_entropy'].append(rqvae_entropy.cpu().item())
                     plot_data['max_id_duplicates'].append(max_duplicates.cpu().item())
@@ -1131,6 +1152,44 @@ def train(
                                f"RQVAE熵: {rqvae_entropy.cpu().item():.4f}, "
                                f"最大ID重复: {max_duplicates.cpu().item():.4f}, "
                                f"码本使用率: {', '.join(codebook_usage_info)}")
+
+                    # 现在可以安全地使用sem_repetition_rate变量
+                    if current_eval_accuracy > 0.60 and sem_repetition_rate < id_repetition_threshold:
+                        logger.info(f"模型准确率和ID重复率均达到阈值！准确率: {current_eval_accuracy:.4f}, RQVAE损失: {current_rqvae_loss:.4f}, 语义ID重复率: {sem_repetition_rate:.4f}")
+
+                        # 保存新的最佳模型
+                        model_save_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        
+                        # 确保保存目录存在 (save_dir 在函数开头定义)
+                        if not os.path.exists(save_dir):
+                            os.makedirs(save_dir)
+
+                        new_best_model_filename = f"hrqvae_model_ACC{current_eval_accuracy:.4f}_RQLOSS{current_rqvae_loss:.4f}_DUPR{sem_repetition_rate:.4f}_{model_save_timestamp}.pt"
+                        new_model_path = os.path.join(save_dir, new_best_model_filename)
+                        
+                        unwrapped_model = accelerator.unwrap_model(model)
+                        state = {
+                            "iter": iter + 1,
+                            "model": unwrapped_model.state_dict(),
+                            "model_config": unwrapped_model.config,
+                            "optimizer": optimizer.state_dict(),
+                            "accuracy": current_eval_accuracy,
+                            "rqvae_loss": current_rqvae_loss,
+                            "sem_id_repetition_rate": sem_repetition_rate  # 新增：记录语义ID重复率
+                        }
+                        
+                        accelerator.save(state, new_model_path)
+                        logger.info(f"模型已保存到: {new_model_path}")
+                    else:
+                        if current_eval_accuracy <= 0.70:
+                            logger.info(f"当前评估准确率 {current_eval_accuracy:.4f} 未达到 0.70 阈值，不保存模型。最佳准确率仍为 {best_eval_accuracy:.4f}")
+                        if sem_repetition_rate >= id_repetition_threshold:
+                            logger.info(f"当前语义ID重复率 {sem_repetition_rate:.4f} 高于 {id_repetition_threshold} 阈值，不保存模型。")
+
+                # 计算ID多样性指标
+                if (iter+1) % eval_every == 0 or iter+1 == iterations:
+                    # 这部分代码已经移到上面，避免重复计算
+                    pass
 
             pbar.update(1)
     

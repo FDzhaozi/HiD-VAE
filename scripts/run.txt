@@ -1,17 +1,33 @@
-python train_rqvae.py configs/rqvae_amazon.gin
-# accelerate launch train_rqvae.py configs/rqvae_amazon.gin   有报错
-python train_h_rqvae.py configs/h_rqvae_amazon.gin
+# 数据集
+python -m data.tags_amazon
+python -m data.tags_kuairand
+修改后 kuairand：
+python -m data.kuairand_beauty_format
+填充缺失标签
+python -m data.fill_kuairand_simple
 
+
+
+
+
+python train_rqvae.py configs/rqvae_amazon.gin
+python train_rqvae.py configs/rqvae_kuairand.gin
+CUDA_VISIBLE_DEVICES=0 python train_rqvae.py configs/rqvae_amazon.gin
+CUDA_VISIBLE_DEVICES=0 python train_h_rqvae.py configs/h_rqvae_amazon.gin
+python train_h_rqvae.py configs/h_rqvae_kuairand.gin
 
 
 # view
+python scripts/view_beauty_dataset.py
+python scripts/view_processed_dataset.py
 python scripts/view_train_rqvae.py configs/rqvae_amazon.gin
 python scripts/view_train_hrqvae.py configs/h_rqvae_amazon.gin
 
 
 # decoder
 python train_decoder.py configs/decoder_amazon.gin
-
+CUDA_VISIBLE_DEVICES=1 python train_decoder.py configs/decoder_amazon.gin
+CUDA_VISIBLE_DEVICES=1 python train_decoder.py configs/decoder_kuairand.gin
 
 
 # tokenizer

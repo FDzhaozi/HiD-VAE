@@ -14,27 +14,43 @@ train.wandb_logging=True
 
 
 
-train.use_h_tokenizer=False
-#train.pretrained_rqvae_path="out/rqvae/amazon/checkpoint_best.pt"
+train.use_h_tokenizer=True
+#train.pretrained_rqvae_path="out/rqvae/amazon/checkpoint_best_sports.pt"
+#train.pretrained_rqvae_path="out/rqvae/kuairand/checkpoint_best.pt"
 
 #train.pretrained_rqvae_path="out/hrqvae/amazon/hrqvae_checkpoint_399999.pt"
-train.pretrained_rqvae_path="out/rqvae/amazon/checkpoint_399999.pt"
+train.pretrained_rqvae_path="out/hrqvae/amazon/hrqvae_AMAZON_20250618_011248/hrqvae_model_ACC0.7702_RQLOSS0.3198_DUPR0.0299_20250618_022907.pt"
+#ath="out/hrqvae/amazon/hrqvae_AMAZON_20250625_135931/hrqvae_model_ACC0.7507_RQLOSS0.3628_DUPR0.0455_20250625_162906.pt"
+
+
+
 train.tag_alignment_weight=0.05
 train.tag_prediction_weight=0.1
-train.tag_class_counts=[6, 130, 927]  
+#train.tag_class_counts=[6, 130, 927]  
+train.tag_class_counts=[38, 168, 348]
 train.tag_embed_dim=768
 train.use_dedup_dim=False
+train.use_concatenated_ids=True
+train.use_interleaved_ids=False
 
 # Best run: https://api.wandb.ai/links/botta-edoardo-carnegie-mellon-university/xb46itxc
 # Checkpoint run: https://api.wandb.ai/links/botta-edoardo-carnegie-mellon-university/6m2fkl1y
 # train.pretrained_decoder_path="trained_models/transformer_amazon_beauty/checkpoint_199999.pt"
+
 train.save_dir_root="out/decoder/amazon/"
 train.dataset_folder="dataset/amazon"
 train.dataset=%data.processed.RecDataset.AMAZON
+
+#train.save_dir_root="out/decoder/kuairand/"
+#train.dataset_folder="dataset/kuairand"
+#train.dataset=%data.processed.RecDataset.KUAIRAND
+
+
 train.force_dataset_process=False
 train.full_eval_every=10000
 train.partial_eval_every=5000
-train.dataset_split="beauty"
+#train.dataset_split="beauty"
+train.dataset_split="sports"
 train.dropout_p=0.3
 train.attn_heads=8
 train.attn_embed_dim=512

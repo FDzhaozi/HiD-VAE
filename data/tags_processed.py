@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from data.tags_amazon import AmazonReviews
 from data.ml1m import RawMovieLens1M
 from data.ml32m import RawMovieLens32M
+from data.tags_kuairand import KuaiRand
 from data.schemas import SeqBatch, TaggedSeqBatch  # 正确导入TaggedSeqBatch
 from enum import Enum
 from torch import Tensor
@@ -21,19 +22,22 @@ class RecDataset(Enum):
     AMAZON = 1
     ML_1M = 2
     ML_32M = 3
+    KUAIRAND = 4
 
 
 DATASET_NAME_TO_RAW_DATASET = {
     RecDataset.AMAZON: AmazonReviews,
     RecDataset.ML_1M: RawMovieLens1M,
-    RecDataset.ML_32M: RawMovieLens32M
+    RecDataset.ML_32M: RawMovieLens32M,
+    RecDataset.KUAIRAND: KuaiRand
 }
 
 
 DATASET_NAME_TO_MAX_SEQ_LEN = {
     RecDataset.AMAZON: 20,
     RecDataset.ML_1M: 200,
-    RecDataset.ML_32M: 200
+    RecDataset.ML_32M: 200,
+    RecDataset.KUAIRAND: 20
 }
 
 
@@ -61,6 +65,19 @@ class ItemData(Dataset):
         if not os.path.exists(processed_data_path) or force_process:
             raw_data.process(max_seq_len=max_seq_len)
         
+        # 新增: 打印训练和验证集的物品比例
+        if "is_train" in raw_data.data["item"]:
+            is_train_flags = raw_data.data["item"]["is_train"]
+            num_total_items = len(is_train_flags)
+            if num_total_items > 0:
+                num_train_items = is_train_flags.sum().item()
+                num_eval_items = num_total_items - num_train_items
+                train_ratio = num_train_items / num_total_items
+                eval_ratio = num_eval_items / num_total_items
+                print(f"物品数据划分比例: 总数={num_total_items}, "
+                      f"训练集={num_train_items} ({train_ratio:.2%}), "
+                      f"验证集={num_eval_items} ({eval_ratio:.2%})")
+
         if train_test_split == "train":
             filt = raw_data.data["item"]["is_train"]
         elif train_test_split == "eval":
@@ -69,7 +86,16 @@ class ItemData(Dataset):
             filt = torch.ones_like(raw_data.data["item"]["x"][:,0], dtype=bool)
 
         self.item_data = raw_data.data["item"]["x"][filt]
-        self.item_text = raw_data.data["item"]["text"][filt]
+        
+        # 增加对item_text加载的鲁棒性
+        if "text" in raw_data.data["item"]:
+            try:
+                self.item_text = raw_data.data["item"]["text"][filt]
+            except (TypeError, IndexError) as e:
+                print(f"警告: 无法加载 item_text: {e}。将跳过此字段。")
+                self.item_text = None
+        else:
+            self.item_text = None
         
         # 加载新增的标签嵌入和标签索引数据
         if "tags_emb" in raw_data.data["item"] and "tags_indices" in raw_data.data["item"]:

@@ -51,6 +51,8 @@ class EncoderDecoderRetrievalModel(nn.Module):
         inference_verifier_fn,
         max_pos=2048,
         jagged_mode: bool = True,
+        n_sem_layers: int = 3,
+        use_interleaved_ids: bool = False
     ) -> None:
         super().__init__()
 
@@ -60,8 +62,10 @@ class EncoderDecoderRetrievalModel(nn.Module):
         self.attn_dim = attn_dim
         self.inference_verifier_fn = inference_verifier_fn
         self.enable_generation = False
+        self.n_sem_layers = n_sem_layers
+        self.use_interleaved_ids = use_interleaved_ids
 
-        self.bos_emb = nn.Parameter(torch.rand(embedding_dim))
+        self.bos_emb = nn.Parameter(torch.rand(embedding_dim), requires_grad=True)
         self.norm = RMSNorm(embedding_dim)
         self.norm_cxt = RMSNorm(embedding_dim)
         self.do = nn.Dropout(p=0.5)
@@ -69,7 +73,9 @@ class EncoderDecoderRetrievalModel(nn.Module):
         self.sem_id_embedder = SemIdEmbedder(
             num_embeddings=num_embeddings,
             sem_ids_dim=sem_id_dim,
-            embeddings_dim=embedding_dim
+            embeddings_dim=embedding_dim,
+            n_sem_layers=n_sem_layers,
+            use_interleaved_ids=use_interleaved_ids
         )
         self.user_id_embedder = UserIdEmbedder(2000, embedding_dim)
         
@@ -97,6 +103,10 @@ class EncoderDecoderRetrievalModel(nn.Module):
         self.in_proj = nn.Linear(embedding_dim, attn_dim, bias=False)
         self.in_proj_context = nn.Linear(embedding_dim, attn_dim, bias=False)
         self.out_proj = nn.Linear(attn_dim, num_embeddings, bias=False)
+        
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                print(f"警告: 参数 {name} 不需要梯度")
     
     def _predict(self, batch: TokenizedSeqBatch) -> AttentionInput:
         user_emb = self.user_id_embedder(batch.user_ids)
@@ -111,7 +121,11 @@ class EncoderDecoderRetrievalModel(nn.Module):
           
         pos = torch.arange(N, device=sem_ids_emb.device).unsqueeze(0)
         wpe = self.wpe(pos)
-
+        
+        # 确保user_emb是三维的，与sem_ids_emb维度匹配
+        if user_emb.dim() == 2:
+            user_emb = user_emb.unsqueeze(1)  # 将形状从[B, D]变为[B, 1, D]
+            
         input_embedding = torch.cat([user_emb, wpe + sem_ids_emb], axis=1)
         input_embedding_fut = self.bos_emb.repeat(B, 1, 1)
         if sem_ids_emb_fut is not None:
@@ -148,7 +162,6 @@ class EncoderDecoderRetrievalModel(nn.Module):
 
     @eval_mode
     @reset_encoder_cache
-    @torch.no_grad
     def generate_next_sem_id(
         self,
         batch: TokenizedSeqBatch,
@@ -158,93 +171,153 @@ class EncoderDecoderRetrievalModel(nn.Module):
         
         assert self.enable_generation, "Model generation is not enabled"
 
-        B, N = batch.sem_ids.shape
-        generated, log_probas = None, 0
-        k = 32 if top_k else 1
-        n_top_k_candidates = 200 if top_k else 1
+        with torch.no_grad():
+            B, N = batch.sem_ids.shape
+            generated, log_probas = None, 0
+            k = 32 if top_k else 1
+            n_top_k_candidates = 200 if top_k else 1
 
-        input_batch = TokenizedSeqBatch(
-            user_ids=batch.user_ids,
-            sem_ids=batch.sem_ids,
-            sem_ids_fut=None,
-            seq_mask=batch.seq_mask,
-            token_type_ids=batch.token_type_ids,
-            token_type_ids_fut=None
-        )
+            input_batch = TokenizedSeqBatch(
+                user_ids=batch.user_ids,
+                sem_ids=batch.sem_ids,
+                sem_ids_fut=None,
+                seq_mask=batch.seq_mask,
+                token_type_ids=batch.token_type_ids,
+                token_type_ids_fut=None
+            )
 
-        for i in range(self.sem_id_dim):
-            logits = self.forward(input_batch).logits
-            probas_batched = F.softmax(logits / temperature, dim=-1)
-            samples_batched = torch.multinomial(probas_batched, num_samples=n_top_k_candidates)
-
-            if generated is None:
-                is_valid_prefix = self.inference_verifier_fn(samples_batched.unsqueeze(-1))
-            else:
-                prefix = torch.cat([generated.flatten(0,1).unsqueeze(1).repeat_interleave(n_top_k_candidates, axis=1), samples_batched.unsqueeze(-1)], axis=-1)
-                is_valid_prefix = self.inference_verifier_fn(prefix).reshape(B, -1)
+            # 获取语义ID和标签ID的层数
+            sem_id_dim = getattr(self, 'sem_id_dim', 3)  # 默认值为3
+            n_sem_layers = getattr(self, 'n_sem_layers', 3)  # 获取语义ID层数，默认为3
             
-            sampled_log_probas = torch.log(torch.gather(probas_batched, 1, samples_batched)).reshape(B, -1)
-            samples = samples_batched.reshape(B, -1)
-
-            # Get top-K:
-            sorted_log_probas, sorted_indices = (
-                -10000*(~is_valid_prefix) +
-                sampled_log_probas +
-                maybe_repeat_interleave(log_probas, n_top_k_candidates, dim=1)
-            ).sort(-1, descending=True)
-
-            top_k_log_probas, top_k_indices = sorted_log_probas[:, :k], sorted_indices[:, :k]
-            top_k_samples = torch.gather(samples, 1, top_k_indices)
+            # 检查是否使用拼接模式（根据sem_id_dim和n_sem_layers比较判断）
+            using_interleaved_mode = self.use_interleaved_ids
+            n_tag_layers = (sem_id_dim - n_sem_layers) if sem_id_dim > n_sem_layers else 0
             
-            if generated is not None:
-                parent_id = torch.gather(generated, 1, (top_k_indices // n_top_k_candidates).unsqueeze(2).expand(-1,-1,i))
-                top_k_samples = torch.cat([parent_id, top_k_samples.unsqueeze(-1)], axis=-1)
+            # 打印调试信息
+            print(f"总ID维度: {sem_id_dim}, 语义ID层数: {n_sem_layers}, 交错模式: {using_interleaved_mode}, 标签层数: {n_tag_layers}")
 
-                next_sem_ids = top_k_samples.flatten(end_dim=1)
+            for i in range(sem_id_dim):
+                logits = self.forward(input_batch).logits
+                probas_batched = F.softmax(logits / temperature, dim=-1)
+                samples_batched = torch.multinomial(probas_batched, num_samples=n_top_k_candidates)
 
-                input_batch = TokenizedSeqBatch(
-                    user_ids=input_batch.user_ids,
-                    sem_ids=input_batch.sem_ids,
-                    sem_ids_fut=next_sem_ids,
-                    token_type_ids_fut=torch.arange(next_sem_ids.shape[1], device=next_sem_ids.device).repeat(next_sem_ids.shape[0], 1),
-                    seq_mask=input_batch.seq_mask,
-                    token_type_ids=input_batch.token_type_ids
-                )
+                if generated is None:
+                    is_valid_prefix = self.inference_verifier_fn(samples_batched.unsqueeze(-1))
+                else:
+                    prefix = torch.cat([generated.flatten(0,1).unsqueeze(1).repeat_interleave(n_top_k_candidates, axis=1), samples_batched.unsqueeze(-1)], axis=-1)
+                    is_valid_prefix = self.inference_verifier_fn(prefix).reshape(B, -1)
+            
+                sampled_log_probas = torch.log(torch.gather(probas_batched, 1, samples_batched)).reshape(B, -1)
+                samples = samples_batched.reshape(B, -1)
 
-                generated = torch.clone(top_k_samples.detach())
-                log_probas = torch.clone(top_k_log_probas.detach())
-            else:
-                next_sem_ids = top_k_samples.reshape(-1, 1)
+                # Get top-K:
+                sorted_log_probas, sorted_indices = (
+                    -10000*(~is_valid_prefix) +
+                    sampled_log_probas +
+                    maybe_repeat_interleave(log_probas, n_top_k_candidates, dim=1)
+                ).sort(-1, descending=True)
 
-                # Explode encoder cache on dim 0 to match input size B*k
-                # TODO: Figure out how to avoid jagged - padded conversions 
-                # (E.g. Implement repeat_interleave jagged kernel)
-                if self.jagged_mode:
-                    cache = torch.zeros(input_batch.sem_ids.shape[0], input_batch.sem_ids.shape[1]+1, self.attn_dim, device=input_batch.sem_ids.device)
-                    cache_mask = torch.cat([torch.ones(input_batch.sem_ids.shape[0], 1, dtype=bool, device=input_batch.seq_mask.device), input_batch.seq_mask], axis=1)
-                    cache[cache_mask] = self.transformer.cached_enc_output.values()
-                    lengths = self.transformer.cached_enc_output.offsets().diff().repeat_interleave(k)
-                    cache = cache.repeat_interleave(k, dim=0)
-                    self.transformer.cached_enc_output = padded_to_jagged_tensor(cache, lengths, max_len=cache.shape[1])
+                top_k_log_probas, top_k_indices = sorted_log_probas[:, :k], sorted_indices[:, :k]
+                top_k_samples = torch.gather(samples, 1, top_k_indices)
+            
+                if generated is not None:
+                    parent_id = torch.gather(generated, 1, (top_k_indices // n_top_k_candidates).unsqueeze(2).expand(-1,-1,i))
+                    top_k_samples = torch.cat([parent_id, top_k_samples.unsqueeze(-1)], axis=-1)
 
-                input_batch = TokenizedSeqBatch(
-                    user_ids=input_batch.user_ids.repeat_interleave(k, dim=0),
-                    sem_ids=input_batch.sem_ids.repeat_interleave(k, dim=0),
-                    sem_ids_fut=next_sem_ids,
-                    token_type_ids_fut=torch.zeros_like(next_sem_ids),
-                    seq_mask=input_batch.seq_mask.repeat_interleave(k, dim=0),
-                    token_type_ids=input_batch.token_type_ids.repeat_interleave(k, dim=0)
-                )
+                    next_sem_ids = top_k_samples.flatten(end_dim=1)
 
-                generated = top_k_samples.unsqueeze(-1)
-                log_probas = torch.clone(top_k_log_probas.detach())
+                    # 创建token_type_ids_fut，需要确保与next_sem_ids形状一致
+                    token_type_ids = torch.arange(next_sem_ids.shape[1], device=next_sem_ids.device).repeat(next_sem_ids.shape[0], 1)
+                    
+                    # 判断是否在语义ID或标签ID层
+                    if using_interleaved_mode:
+                        if i % 2 == 0: # Semantic ID part
+                            sem_layer_idx_current = i // 2
+                        else: # Tag ID part
+                            tag_layer_idx_current = i // 2
+                    elif i >= n_sem_layers and n_tag_layers > 0: # Concatenated mode with tags
+                        tag_layer_idx = i - n_sem_layers
+
+                    input_batch = TokenizedSeqBatch(
+                        user_ids=input_batch.user_ids,
+                        sem_ids=input_batch.sem_ids,
+                        sem_ids_fut=next_sem_ids,
+                        token_type_ids_fut=token_type_ids,
+                        seq_mask=input_batch.seq_mask,
+                        token_type_ids=input_batch.token_type_ids
+                    )
+
+                    generated = torch.clone(top_k_samples.detach())
+                    log_probas = torch.clone(top_k_log_probas.detach())
+                else:
+                    next_sem_ids = top_k_samples.reshape(-1, 1)
+
+                    # Explode encoder cache on dim 0 to match input size B*k
+                    # TODO: Figure out how to avoid jagged - padded conversions 
+                    # (E.g. Implement repeat_interleave jagged kernel)
+                    if self.jagged_mode:
+                        cache = torch.zeros(input_batch.sem_ids.shape[0], input_batch.sem_ids.shape[1]+1, self.attn_dim, device=input_batch.sem_ids.device)
+                        cache_mask = torch.cat([torch.ones(input_batch.sem_ids.shape[0], 1, dtype=torch.bool, device=input_batch.seq_mask.device), input_batch.seq_mask], axis=1)
+                        cache[cache_mask] = self.transformer.cached_enc_output.values()
+                        lengths = self.transformer.cached_enc_output.offsets().diff().repeat_interleave(k)
+                        cache = cache.repeat_interleave(k, dim=0)
+                        self.transformer.cached_enc_output = padded_to_jagged_tensor(cache, lengths, max_len=cache.shape[1])
+
+                    input_batch = TokenizedSeqBatch(
+                        user_ids=input_batch.user_ids.repeat_interleave(k, dim=0),
+                        sem_ids=input_batch.sem_ids.repeat_interleave(k, dim=0),
+                        sem_ids_fut=next_sem_ids,
+                        token_type_ids_fut=torch.zeros_like(next_sem_ids),
+                        seq_mask=input_batch.seq_mask.repeat_interleave(k, dim=0),
+                        token_type_ids=input_batch.token_type_ids.repeat_interleave(k, dim=0)
+                    )
+
+                    generated = top_k_samples.unsqueeze(-1)
+                    log_probas = torch.clone(top_k_log_probas.detach())
         
+            # 打印最终生成的ID形状
+            print(f"生成的ID形状: {generated.shape}")
+            if generated.shape[-1] == sem_id_dim:
+                # 如果使用拼接模式，分别打印语义ID和标签ID
+                if using_interleaved_mode and n_tag_layers > 0:
+                    is_batched_candidates = generated.dim() == 3 # True if shape is [B, K, total_dim]
+                    num_candidates = generated.shape[1] if is_batched_candidates else 1
+                    actual_generated_ids = generated if not is_batched_candidates else generated[:,0,:] # Take first candidate for printing
+
+                    sem_ids_list = []
+                    tag_ids_list = []
+                    for i in range(sem_id_dim):
+                        if i % 2 == 0: # Semantic ID
+                            if (i // 2) < n_sem_layers:
+                                sem_ids_list.append(actual_generated_ids[..., i:i+1])
+                        else: # Tag ID
+                            if (i // 2) < n_tag_layers:
+                                tag_ids_list.append(actual_generated_ids[..., i:i+1])
+                    
+                    sem_ids_final = torch.cat(sem_ids_list, dim=-1) if sem_ids_list else torch.empty(actual_generated_ids.shape[0], 0, device=generated.device)
+                    tag_ids_final = torch.cat(tag_ids_list, dim=-1) if tag_ids_list else torch.empty(actual_generated_ids.shape[0], 0, device=generated.device)
+                    
+                    print(f"交错模式 - 语义ID形状: {sem_ids_final.shape}, 标签ID形状: {tag_ids_final.shape}")
+                    if generated.shape[0] > 0:
+                        sample_idx = 0 # Print for the first item in the batch
+                        print(f"样本 {sample_idx} 的语义ID (从交错中提取): {sem_ids_final[sample_idx].tolist()}")
+                        print(f"样本 {sample_idx} 的标签ID (从交错中提取): {tag_ids_final[sample_idx].tolist()}")
+
+                elif (not using_interleaved_mode) and (sem_id_dim > n_sem_layers) and n_tag_layers > 0: # Concatenated with tags
+                    sem_ids = generated[..., :n_sem_layers]
+                    tag_ids = generated[..., n_sem_layers:n_sem_layers+n_tag_layers]
+                    print(f"拼接模式 - 语义ID形状: {sem_ids.shape}, 标签ID形状: {tag_ids.shape}")
+                    if generated.shape[0] > 0:
+                        sample_idx = 0
+                        print(f"样本 {sample_idx} 的语义ID: {sem_ids[sample_idx, 0].tolist() if sem_ids.dim() > 2 else sem_ids[sample_idx].tolist()}")
+                        print(f"样本 {sample_idx} 的标签ID: {tag_ids[sample_idx, 0].tolist() if tag_ids.dim() > 2 else tag_ids[sample_idx].tolist()}")
+            
         return GenerationOutput(
             sem_ids=generated.squeeze(),
             log_probas=log_probas.squeeze()
         )
             
-    @torch.compile
     def forward(self, batch: TokenizedSeqBatch) -> ModelOutput:
         seq_mask = batch.seq_mask
         B, N = seq_mask.shape
@@ -257,13 +330,34 @@ class EncoderDecoderRetrievalModel(nn.Module):
                 # This works because batch.sem_ids_fut is fixed length, no padding.
                 logits = rearrange(jagged_to_flattened_tensor(predict_out), "(b n) d -> b n d", b=B)[:,:-1,:].flatten(end_dim=1)
                 target = batch.sem_ids_fut.flatten(end_dim=1)
-                unred_loss = rearrange(F.cross_entropy(logits, target, reduction="none", ignore_index=-1), "(b n) -> b n", b=B)
+                
+                # 确保目标值在有效范围内 [0, num_embeddings-1]
+                valid_target = torch.clamp(target, min=0, max=self.num_embeddings-1)
+                # 创建掩码，标记原始目标值为-1或超出范围的位置
+                ignore_mask = (target < 0) | (target >= self.num_embeddings)
+                # 对于要忽略的位置，将目标值设为0（任意有效值），稍后会被忽略
+                valid_target = torch.where(ignore_mask, torch.zeros_like(target), valid_target)
+                
+                unred_loss = rearrange(F.cross_entropy(logits, valid_target, reduction="none", ignore_index=-1), "(b n) -> b n", b=B)
+                # 额外忽略超出范围的目标值
+                unred_loss = torch.where(rearrange(ignore_mask, "(b n) -> b n", b=B), torch.zeros_like(unred_loss), unred_loss)
                 loss = unred_loss.sum(axis=1).mean()
             else:
                 logits = predict_out
                 out = logits[:, :-1, :].flatten(end_dim=1)
                 target = batch.sem_ids_fut.flatten(end_dim=1)
-                loss = rearrange(F.cross_entropy(out, target, reduction="none", ignore_index=-1), "(b n) -> b n", b=B).sum(axis=1).mean()
+                
+                # 确保目标值在有效范围内 [0, num_embeddings-1]
+                valid_target = torch.clamp(target, min=0, max=self.num_embeddings-1)
+                # 创建掩码，标记原始目标值为-1或超出范围的位置
+                ignore_mask = (target < 0) | (target >= self.num_embeddings)
+                # 对于要忽略的位置，将目标值设为0（任意有效值），稍后会被忽略
+                valid_target = torch.where(ignore_mask, torch.zeros_like(target), valid_target)
+                
+                unred_loss = rearrange(F.cross_entropy(out, valid_target, reduction="none", ignore_index=-1), "(b n) -> b n", b=B)
+                # 额外忽略超出范围的目标值
+                unred_loss = torch.where(rearrange(ignore_mask, "(b n) -> b n", b=B), torch.zeros_like(unred_loss), unred_loss)
+                loss = unred_loss.sum(axis=1).mean()
             if not self.training and self.jagged_mode:
                 self.transformer.cached_enc_output = None
             loss_d = unred_loss.mean(axis=0)

@@ -11,6 +11,15 @@ import gc
 import nltk
 from nltk.corpus import stopwords
 
+# 添加对numpy._core.multiarray._reconstruct的支持
+from torch.serialization import add_safe_globals
+try:
+    from numpy._core.multiarray import _reconstruct
+    add_safe_globals([_reconstruct])
+except ImportError:
+    # 如果无法直接导入，可以尝试通过字符串注册
+    add_safe_globals(['numpy._core.multiarray._reconstruct'])
+
 from collections import defaultdict
 from data.tags_preprocessing import PreprocessingMixin
 from torch_geometric.data import download_google_url
@@ -48,25 +57,44 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         force_reload: bool = False,
     ) -> None:
         self.split = split
+        self.force_reload = force_reload  # 保存force_reload参数
+        
+        print(f"\n初始化AmazonReviews数据集: split={split}, force_reload={force_reload}")
+        
+        # 如果强制重新加载，先删除已存在的处理文件
+        if force_reload:
+            processed_file_path = osp.join(osp.join(root, 'processed'), f'title_data_{split}_5tags.pt')
+            if osp.exists(processed_file_path):
+                print(f"强制重新加载: 删除已存在的处理文件 {processed_file_path}")
+                os.remove(processed_file_path)
+                print("文件已删除，将重新处理数据")
+        
         super(AmazonReviews, self).__init__(
             root, transform, pre_transform, force_reload
         )
-        # 尝试直接加载数据并打印类型
+        
+        # 修改torch_geometric的加载行为，确保使用weights_only=False
+        # 保存原始函数
+        original_torch_load = torch.load
+        
+        # 创建一个包装函数，强制使用weights_only=False
+        def patched_torch_load(*args, **kwargs):
+            kwargs['weights_only'] = False
+            return original_torch_load(*args, **kwargs)
+        
+        # 临时替换torch.load
+        torch.load = patched_torch_load
+        
         try:
-            data = torch.load(self.processed_paths[0])
-            print(f"加载的数据类型: {type(data)}")
-            print(f"是否为元组: {isinstance(data, tuple)}")
-            print(f"len(data): {len(data)}")
-            for i, item in enumerate(data):
-                print(f"第 {i+1} 个元素的类型: {type(item)}")
-            if not isinstance(data, tuple):
-                print(f"实际数据类型: {type(data)}")
-                # 如果是字典，打印键
-                if isinstance(data, dict):
-                    print(f"字典键: {list(data.keys())}")
+            # 尝试加载数据
+            print("尝试加载数据，使用weights_only=False...")
+            self.load(self.processed_paths[0], data_cls=HeteroData)
+            print("数据加载成功!")
         except Exception as e:
             print(f"加载数据时出错: {str(e)}")
-        self.load(self.processed_paths[0], data_cls=HeteroData)
+        finally:
+            # 恢复原始函数
+            torch.load = original_torch_load
     
     @property
     def raw_file_names(self) -> List[str]:
@@ -325,28 +353,41 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         
         print("\n开始文本编码...")
         show_memory_usage()
-        item_emb = self._encode_text_feature_batched(sentences, batch_size=64)  # 减小批大小
+        item_emb = self._encode_text_feature_batched(sentences, batch_size=32)  # 减小批大小
         gc.collect()  # 手动触发垃圾回收
         torch.cuda.empty_cache()
         show_memory_usage()
         print(f"文本特征维度: {item_emb.shape}")
         print(f"编码示例(前5维): {item_emb[0,:5]}")
         
-        # 对5个标签分别进行编码
+        # 对5个标签分别进行编码 - 优化内存使用
         print("\n开始标签编码...")
         tags_embs = []
+        model = SentenceTransformer('sentence-transformers/sentence-t5-xl')  # 只加载一次模型
+        
         for i in range(5):
-            tag_sentences = item_data['five_tags'].apply(lambda x: x[i] if i < len(x) else "")
             print(f"\n处理标签{i+1}...")
-            tag_emb = self._encode_text_feature_batched(tag_sentences, batch_size=64)  # 减小批大小
+            tag_sentences = item_data['five_tags'].apply(lambda x: x[i] if i < len(x) else "").tolist()
+            
+            # 分批处理标签编码，每批处理后清理内存
+            batch_size = 16  # 更小的批大小
+            tag_emb = self._encode_text_feature_batched(tag_sentences, model=model, batch_size=batch_size)
             tags_embs.append(tag_emb)
             
-            # 手动清理内存
+            # 更积极地清理内存
+            del tag_sentences
+            gc.collect()
             torch.cuda.empty_cache()
+            show_memory_usage()
         
         # 将5个标签的编码合并为一个张量
         tags_emb_tensor = torch.stack(tags_embs, dim=1)  # [n_items, 5, emb_dim]
         print(f"\n合并后的标签特征维度: {tags_emb_tensor.shape}")
+        
+        # 清理不再需要的变量
+        del tags_embs, model
+        gc.collect()
+        torch.cuda.empty_cache()
         
         data['item'].x = item_emb
         data['item'].text = np.array(sentences)
@@ -374,12 +415,29 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         print(f"测试集商品数: {(~data['item'].is_train).sum().item()}")
 
         print("\n保存处理后的数据...")
-        self.save([data], self.processed_paths[0])
+        # 修改torch.save的行为，确保兼容性
+        original_torch_save = torch.save
+        def patched_torch_save(*args, **kwargs):
+            kwargs['_use_new_zipfile_serialization'] = False
+            return original_torch_save(*args, **kwargs)
+        
+        # 临时替换torch.save
+        torch.save = patched_torch_save
+        
+        try:
+            self.save([data], self.processed_paths[0])
+            print("数据保存成功!")
+        except Exception as e:
+            print(f"保存数据时出错: {str(e)}")
+        finally:
+            # 恢复原始函数
+            torch.save = original_torch_save
+            
         print("=== 数据处理完成 ===\n")
         
     @staticmethod
-    def _encode_text_feature_batched(text_feat, model=None, batch_size=64):
-        """分批处理文本编码"""
+    def _encode_text_feature_batched(text_feat, model=None, batch_size=32):
+        """分批处理文本编码，优化内存使用"""
         if model is None:
             model = SentenceTransformer('sentence-transformers/sentence-t5-xl')
         
@@ -395,6 +453,10 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
             batch_text = text_feat[i:batch_end]  # 直接使用列表索引
             print(f"\r处理进度: {batch_end}/{total_samples} ({batch_end/total_samples*100:.1f}%)", end="")
             
+            # 确保内存清理
+            gc.collect()
+            torch.cuda.empty_cache()
+            
             batch_embeddings = model.encode(
                 sentences=batch_text,
                 show_progress_bar=False,
@@ -403,15 +465,27 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
             
             embeddings_list.append(batch_embeddings)
             
+            # 立即删除不再需要的变量
+            del batch_text, batch_embeddings
+            
             # 手动清理内存
+            gc.collect()
             torch.cuda.empty_cache()
         
         print()  # 换行
-        return torch.cat(embeddings_list, dim=0)
+        
+        # 合并所有批次的嵌入
+        result = torch.cat(embeddings_list, dim=0)
+        
+        # 清理列表
+        del embeddings_list
+        gc.collect()
+        
+        return result
 
 
 if __name__ == "__main__":
     # 重新处理已经下载的文件，并指定一个新的路径
-    dataset = AmazonReviews(root="dataset/amazon", split="beauty", force_reload=True)
+    dataset = AmazonReviews(root="dataset/amazon", split="sports", force_reload=True)
    
 
