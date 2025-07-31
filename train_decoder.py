@@ -7,11 +7,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-# 配置PyTorch编译选项，而不是完全禁用
+
 torch._dynamo.config.suppress_errors = True
-# 减小缓存大小以避免内存问题
 torch._dynamo.config.cache_size_limit = 4
-# 不完全禁用，而是使用更保守的设置
 torch._dynamo.config.dynamic_shapes = False
 torch._dynamo.config.optimize_ddp = False
 
