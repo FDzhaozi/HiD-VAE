@@ -23,7 +23,7 @@ train.tag_alignment_weight=0.0
 train.tag_prediction_weight=0.0
 train.tag_class_counts=[37, 168, 353]
 train.tag_embed_dim=768
-train.use_dedup_dim=False
+train.use_dedup_dim=True
 train.use_concatenated_ids=False
 train.use_interleaved_ids=True
 

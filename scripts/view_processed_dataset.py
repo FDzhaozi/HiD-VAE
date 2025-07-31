@@ -289,6 +289,24 @@ class BeautyDatasetViewer:
                     print("\n数据集统计:")
                     print(f"总用户数: {len(set([u.item() if isinstance(u, torch.Tensor) else u for u in history_data['train']['userId']]))}")
                     
+                    # 计算并打印总交互次数
+                    total_interactions = 0
+                    # 计算训练集交互数
+                    train_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['train']['itemId']])
+                    # 计算验证集交互数
+                    eval_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['eval']['itemId']])
+                    # 计算测试集交互数
+                    test_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['test']['itemId']])
+                    # 计算目标交互数（未来项目）
+                    future_interactions = len(history_data['train']['itemId_fut']) + len(history_data['eval']['itemId_fut']) + len(history_data['test']['itemId_fut'])
+                    
+                    total_interactions = train_interactions + eval_interactions + test_interactions + future_interactions
+                    print(f"总交互次数: {total_interactions}")
+                    print(f"  - 训练集交互: {train_interactions}")
+                    print(f"  - 验证集交互: {eval_interactions}")
+                    print(f"  - 测试集交互: {test_interactions}")
+                    print(f"  - 目标交互: {future_interactions}")
+                    
                     # 计算序列长度统计
                     if isinstance(history_data['train']['itemId'][0], list):
                         train_lengths = [len([x for x in seq if x >= 0]) for seq in history_data['train']['itemId']]
