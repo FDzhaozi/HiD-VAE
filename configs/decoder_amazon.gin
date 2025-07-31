@@ -19,8 +19,7 @@ train.use_h_tokenizer=True
 #train.pretrained_rqvae_path="out/rqvae/kuairand/checkpoint_best.pt"
 
 #train.pretrained_rqvae_path="out/hrqvae/amazon/hrqvae_checkpoint_399999.pt"
-train.pretrained_rqvae_path="out/hrqvae/amazon/hrqvae_AMAZON_20250618_011248/hrqvae_model_ACC0.7702_RQLOSS0.3198_DUPR0.0299_20250618_022907.pt"
-#ath="out/hrqvae/amazon/hrqvae_AMAZON_20250625_135931/hrqvae_model_ACC0.7507_RQLOSS0.3628_DUPR0.0455_20250625_162906.pt"
+train.pretrained_rqvae_path="out/hrqvae/amazon/hrqvae_AMAZON_20250618_011248/hrqvae_model.pt"
 
 
 
