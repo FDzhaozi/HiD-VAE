@@ -35,7 +35,7 @@ class TopKAccumulator:
 
 class NDCGAccumulator:
     """
-    计算NDCG (Normalized Discounted Cumulative Gain) 指标
+    计算NDCG (Normalized Discounted Cumulative Gain) 
     
     NDCG衡量排序质量，考虑了项目的相关性和排名位置
     """
