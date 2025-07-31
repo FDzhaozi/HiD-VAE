@@ -53,7 +53,7 @@ class TagAlignmentLoss(nn.Module):
 
     def forward(self, codebook_emb: Tensor, tag_emb: Tensor, layer_idx: int) -> Tensor:
         """
-        计算码本嵌入和标签嵌入之间的对比学习损失 (InfoNCE)
+        计算码本嵌入和标签嵌入之间的对比学习损失  (InfoNCE)
 
         参数:
             codebook_emb: 形状为 [batch_size, embed_dim] 的码本嵌入
