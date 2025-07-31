@@ -6,7 +6,6 @@ The framework operates in two stages:
 2. A transformer-based model is trained on sequences of these IDs to generate recommendations.
 
 ![image](https://github.com/FDzhaozi/HiD-VAE/blob/main/plots/method-2_cropped.png)  
-*(Figure illustrating HiD-VAE's hierarchical disentanglement compared to traditional methods, showing reduced ID collisions and interpretable semantic paths.)*
 
 ### Currently supports
 * **Datasets:** Amazon Reviews (Beauty, Sports), KuaiRand
