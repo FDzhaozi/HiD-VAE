@@ -20,13 +20,13 @@ from data.processed import SeqData
 from data.utils import batch_to
 from data.utils import cycle
 from data.utils import next_batch
-# 导入部分需要添加 NDCGAccumulator
+# Import NDCGAccumulator
 from evaluate.metrics import TopKAccumulator
 from evaluate.metrics import NDCGAccumulator
 from modules.model import EncoderDecoderRetrievalModel
 from modules.scheduler.inv_sqrt import InverseSquareRootScheduler
 from modules.tokenizer.semids import SemanticIdTokenizer
-# 导入HSemanticIdTokenizer
+# Import HSemanticIdTokenizer
 from modules.tokenizer.h_semids import HSemanticIdTokenizer
 from modules.utils import compute_debug_metrics
 from modules.utils import parse_config
@@ -55,7 +55,7 @@ class MetricsTracker:
             if len(values) > 0:
                 plt.figure(figsize=(10, 6))
                 
-                # 确保x和y维度匹配
+                # Ensure x and y dimensions match
                 iterations = self.iterations[:len(values)]
                 
                 plt.plot(iterations, values)
@@ -66,11 +66,11 @@ class MetricsTracker:
                 plt.savefig(os.path.join(save_path, f'{metric_name}_curve.png'))
                 plt.close()
 
-# 定义计算重复率的函数
+# Function to calculate the repetition rate
 def calculate_repetition_rate(item_ids: torch.Tensor):
     if item_ids is None or item_ids.nelement() == 0:
         return 0.0, 0, 0
-    # 使用 PyTorch 的 unique 函数计算唯一行及其计数
+    # Use PyTorch's unique function to count unique rows
     unique_ids, inverse_indices, counts = torch.unique(item_ids, dim=0, return_inverse=True, return_counts=True)
     num_unique_items = unique_ids.shape[0]
     total_items = item_ids.shape[0]
@@ -119,25 +119,25 @@ def train(
     train_data_subsample=True,
     model_jagged_mode=True,
     vae_hf_model_name="edobotta/rqvae-amazon-beauty",
-    # 新增参数，用于选择tokenizer类型
+    # New parameter to select the tokenizer type
     use_h_tokenizer=False,
-    # 新增参数，用于标签预测相关配置
+    # New parameters for tag prediction configuration
     tag_alignment_weight=0.5,
     tag_prediction_weight=0.5,
     tag_class_counts=None,
     tag_embed_dim=768,
     use_dedup_dim=False,
-    # 新增参数，用于拼接模式
-    use_concatenated_ids=True,  # 默认开启拼接模式，与use_dedup_dim互斥
-    use_interleaved_ids=False, # 新增参数，用于控制交错模式
+    # New parameter for concatenation mode
+    use_concatenated_ids=True,  # Concatenation mode is enabled by default, mutually exclusive with use_dedup_dim
+    use_interleaved_ids=False, # New parameter to control interleaved mode
 ):  
-    # 创建日志目录
+    # Create log directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # 文件夹带时间戳
+    # Folder with timestamp
     log_dir = os.path.join(save_dir_root, timestamp)
     os.makedirs(log_dir, exist_ok=True)
     
-    # 设置日志记录
+    # Set up logging
     log_file = os.path.join(log_dir, f"training_{timestamp}.log")
     
     logging.basicConfig(
@@ -151,14 +151,14 @@ def train(
     
     logger = logging.getLogger("train_decoder")
     
-    # 创建指标跟踪器
+    # Create metrics tracker
     metrics_tracker = MetricsTracker([
         'loss', 'learning_rate', 'eval_loss', 
         'hit@1', 'hit@5', 'hit@10',
         'ndcg@1', 'ndcg@5', 'ndcg@10'
     ])
     
-    # 记录训练参数
+    # Log training parameters
     params = locals()
     logger.info("Training parameters:")
     for key, value in params.items():
@@ -201,7 +201,7 @@ def train(
     
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Eval dataset size: {len(eval_dataset)}")
-    # 分别打印训练集和测试集的前1条数据
+    # Print the first sample from the training and evaluation datasets respectively
     logger.info("Train dataset sample:")
     for i in range(1):
         logger.info(f"  {train_dataset[i]}")
@@ -219,22 +219,22 @@ def train(
         train_dataloader, eval_dataloader
     )
 
-    # 根据参数选择使用哪种tokenizer
+    # Select tokenizer based on parameters
     if use_h_tokenizer:
         logger.info("Using HSemanticIdTokenizer with tag prediction capabilities")
-        # 确保use_dedup_dim与use_concatenated_ids/use_interleaved_ids互斥
+        # Ensure use_dedup_dim is mutually exclusive with use_concatenated_ids/use_interleaved_ids
         if use_dedup_dim and (use_concatenated_ids or use_interleaved_ids):
-            logger.warning(f"use_dedup_dim ({use_dedup_dim}) 与 use_concatenated_ids ({use_concatenated_ids}) 或 use_interleaved_ids ({use_interleaved_ids}) 互斥。")
-            logger.warning("将强制设置 use_dedup_dim=False 以避免HSemanticIdTokenizer初始化错误。")
+            logger.warning(f"use_dedup_dim ({use_dedup_dim}) is mutually exclusive with use_concatenated_ids ({use_concatenated_ids}) or use_interleaved_ids ({use_interleaved_ids}).")
+            logger.warning("Forcing use_dedup_dim=False to avoid HSemanticIdTokenizer initialization error.")
             use_dedup_dim = False
         
         if use_concatenated_ids:
-            logger.info("使用拼接模式: 语义ID和标签ID将被拼接在一起")
+            logger.info("Using concatenation mode: Semantic IDs and Tag IDs will be concatenated")
         
-        # 硬编码正确的tag_class_counts值，确保与实际模型一致
-        # 根据错误信息确定的实际值为[7, 30, 97]
+        # Hardcode the correct tag_class_counts value to ensure consistency with the actual model
+        # The actual value determined from the error message is [7, 30, 97]
         model_tag_class_counts = [7, 30, 97]
-        logger.info(f"使用硬编码的标签类别计数: {model_tag_class_counts}，而不是配置文件中的: {tag_class_counts}")
+        logger.info(f"Using hardcoded tag class counts: {model_tag_class_counts}, instead of the one from the config file: {tag_class_counts}")
         
         tokenizer = HSemanticIdTokenizer(
             input_dim=vae_input_dim,
@@ -244,15 +244,15 @@ def train(
             n_layers=vae_n_layers,
             n_cat_feats=vae_n_cat_feats,
             hrqvae_weights_path=pretrained_rqvae_path,
-            hrqvae_codebook_normalize=True,  # 确保这里是True
+            hrqvae_codebook_normalize=True,  # Ensure this is True
             hrqvae_sim_vq=vae_sim_vq,
             tag_alignment_weight=tag_alignment_weight,
             tag_prediction_weight=tag_prediction_weight,
-            tag_class_counts=model_tag_class_counts,  # 使用硬编码的值
+            tag_class_counts=model_tag_class_counts,  # Use the hardcoded value
             tag_embed_dim=tag_embed_dim,
             use_dedup_dim=use_dedup_dim,
-            use_concatenated_ids=use_concatenated_ids,  # 传递拼接模式参数
-            use_interleaved_ids=use_interleaved_ids # 传递交错模式参数
+            use_concatenated_ids=use_concatenated_ids,  # Pass the concatenation mode parameter
+            use_interleaved_ids=use_interleaved_ids # Pass the interleaved mode parameter
         )
     else:
         logger.info("Using standard SemanticIdTokenizer")
@@ -269,36 +269,36 @@ def train(
             use_dedup_dim=use_dedup_dim
         )
     
-    # 进行预处理
+    # Pre-computation step
     tokenizer = accelerator.prepare(tokenizer)
     tokenizer.precompute_corpus_ids(item_dataset)
     logger.info("Tokenizer prepared and corpus IDs precomputed")
     
-    # 计算和打印ID重复率
-    if accelerator.is_main_process: # 只在主进程执行
+    # Calculate and print the ID repetition rate
+    if accelerator.is_main_process: # Only execute on the main process
         cached_item_ids = tokenizer.cached_ids
-        if cached_item_ids is not None and cached_item_ids.numel() > 0: # 增加cached_item_ids.numel() > 0判断
-            if use_dedup_dim: # 当使用SemanticIdTokenizer且use_dedup_dim=True时
-                logger.info("use_dedup_dim is True (通常与 SemanticIdTokenizer 一起使用)。计算原始ID部分和最终ID的重复率。")
-                # 原始ID部分 (去掉最后一列的去重维度)
+        if cached_item_ids is not None and cached_item_ids.numel() > 0: # Add check for cached_item_ids.numel() > 0
+            if use_dedup_dim: # When using SemanticIdTokenizer and use_dedup_dim=True
+                logger.info("use_dedup_dim is True (typically used with SemanticIdTokenizer). Calculating repetition rate for original ID part and final IDs.")
+                # Original ID part (without the last deduplication dimension)
                 if cached_item_ids.shape[1] > 1:
                     original_ids_part = cached_item_ids[:, :-1]
                     original_rep_rate, num_unique_orig, total_orig = calculate_repetition_rate(original_ids_part)
-                    logger.info(f"  原始ID部分 (前 {original_ids_part.shape[1]} 维) 的重复率: {original_rep_rate:.4f} ({num_unique_orig} unique / {total_orig} total)")
+                    logger.info(f"  Repetition rate of original ID part (first {original_ids_part.shape[1]} dims): {original_rep_rate:.4f} ({num_unique_orig} unique / {total_orig} total)")
                 else:
-                    logger.warning("cached_item_ids 维度不足以分离原始ID和去重维度。")
+                    logger.warning("cached_item_ids dimensions are insufficient to separate original IDs and the deduplication dimension.")
 
-                # 最终ID (包含去重维度)
+                # Final IDs (including the deduplication dimension)
                 final_rep_rate, num_unique_final, total_final = calculate_repetition_rate(cached_item_ids)
-                logger.info(f"  最终ID (共 {cached_item_ids.shape[1]} 维, 含去重维度) 的重复率: {final_rep_rate:.4f} ({num_unique_final} unique / {total_final} total)")
-            else: # use_dedup_dim is False (当使用HSemanticIdTokenizer, 或 SemanticIdTokenizer且use_dedup_dim=False时)
-                logger.info("use_dedup_dim is False. 计算完整ID的重复率 (对于HSemanticIdTokenizer，这可能包含语义ID和标签ID)。")
+                logger.info(f"  Repetition rate of final IDs (total {cached_item_ids.shape[1]} dims, including deduplication dim): {final_rep_rate:.4f} ({num_unique_final} unique / {total_final} total)")
+            else: # use_dedup_dim is False (when using HSemanticIdTokenizer, or SemanticIdTokenizer with use_dedup_dim=False)
+                logger.info("use_dedup_dim is False. Calculating repetition rate for the full IDs (for HSemanticIdTokenizer, this may include semantic and tag IDs).")
                 rep_rate, num_unique, total = calculate_repetition_rate(cached_item_ids)
-                logger.info(f"  完整ID (共 {cached_item_ids.shape[1]} 维) 的重复率: {rep_rate:.4f} ({num_unique} unique / {total} total)")
+                logger.info(f"  Repetition rate of full IDs (total {cached_item_ids.shape[1]} dims): {rep_rate:.4f} ({num_unique} unique / {total} total)")
 
-                # 如果使用的是HSemanticIdTokenizer并且拼接或交错ID，额外计算并打印仅语义ID部分的重复率
+                # If using HSemanticIdTokenizer with concatenated or interleaved IDs, additionally calculate and print the repetition rate for the semantic ID part only
                 if use_h_tokenizer and (use_concatenated_ids or use_interleaved_ids):
-                    num_semantic_layers = tokenizer.n_layers  # 这是 HRQ-VAE 的 n_layers
+                    num_semantic_layers = tokenizer.n_layers  # This is the n_layers of the HRQ-VAE
                     
                     semantic_part_ids = None
                     if num_semantic_layers > 0 and cached_item_ids.shape[1] > 0:
@@ -306,33 +306,33 @@ def train(
                             if cached_item_ids.shape[1] >= num_semantic_layers:
                                 semantic_part_ids = cached_item_ids[:, :num_semantic_layers]
                             else:
-                                logger.warning(f"拼接模式下，cached_item_ids维度 ({cached_item_ids.shape[1]}) 小于语义层数 ({num_semantic_layers})，无法提取语义部分。")
+                                logger.warning(f"In concatenation mode, cached_item_ids dimension ({cached_item_ids.shape[1]}) is smaller than the number of semantic layers ({num_semantic_layers}), cannot extract semantic part.")
                         elif use_interleaved_ids:
-                            # 提取交错的语义ID：索引为 0, 2, 4, ...
+                            # Extract interleaved semantic IDs: indices are 0, 2, 4, ...
                             semantic_indices = [i * 2 for i in range(num_semantic_layers) if i * 2 < cached_item_ids.shape[1]]
                             if semantic_indices:
                                 semantic_part_ids = cached_item_ids[:, semantic_indices]
                             else:
-                                logger.warning(f"交错模式下，无法根据语义层数 ({num_semantic_layers}) 和总维度 ({cached_item_ids.shape[1]}) 提取有效的语义ID索引。")
+                                logger.warning(f"In interleaved mode, cannot extract valid semantic ID indices based on num_semantic_layers ({num_semantic_layers}) and total dimensions ({cached_item_ids.shape[1]}).")
                         
                         if semantic_part_ids is not None and semantic_part_ids.numel() > 0:
-                            logger.info(f"  同时，计算仅语义ID部分 (从完整ID中提取的 {semantic_part_ids.shape[1]} 维) 的重复率:")
+                            logger.info(f"  Additionally, calculating repetition rate for the semantic-only ID part ({semantic_part_ids.shape[1]} dims extracted from full IDs):")
                             sem_rep_rate, sem_num_unique, sem_total = calculate_repetition_rate(semantic_part_ids)
-                            logger.info(f"    仅语义ID部分的重复率: {sem_rep_rate:.4f} ({sem_num_unique} unique / {sem_total} total)")
+                            logger.info(f"    Repetition rate of semantic-only ID part: {sem_rep_rate:.4f} ({sem_num_unique} unique / {sem_total} total)")
                         elif num_semantic_layers > 0 : # semantic_part_ids is None or empty but should not be
-                            logger.warning(f"  未能成功提取仅语义ID部分进行重复率计算。num_semantic_layers: {num_semantic_layers}")
+                            logger.warning(f"  Failed to extract semantic-only ID part for repetition rate calculation. num_semantic_layers: {num_semantic_layers}")
                     elif num_semantic_layers == 0:
-                        logger.info("  num_semantic_layers 为 0，不计算仅语义ID部分的重复率。")
+                        logger.info("  num_semantic_layers is 0, skipping repetition rate calculation for semantic-only ID part.")
 
         else:
-            logger.warning("tokenizer.cached_ids 为 None 或为空，无法计算重复率。")
+            logger.warning("tokenizer.cached_ids is None or empty, cannot calculate repetition rate.")
     
     if push_vae_to_hf:
         login()
         tokenizer.rq_vae.push_to_hub(vae_hf_model_name)
         logger.info(f"Pushed VAE to HuggingFace: {vae_hf_model_name}")
 
-    # 获取语义ID层数以正确区分语义ID和标签ID
+    # Get the number of semantic ID layers to correctly differentiate between semantic and tag IDs
     n_sem_layers = vae_n_layers if hasattr(tokenizer, 'n_layers') else vae_n_layers
     logger.info(f"Using {n_sem_layers} semantic ID layers")
 
@@ -347,8 +347,8 @@ def train(
         sem_id_dim=tokenizer.sem_ids_dim,
         max_pos=train_dataset.max_seq_len*tokenizer.sem_ids_dim,
         jagged_mode=model_jagged_mode,
-        n_sem_layers=n_sem_layers,  # 传递语义ID层数
-        use_interleaved_ids=use_interleaved_ids # 传递交错模式参数
+        n_sem_layers=n_sem_layers,  # Pass the number of semantic ID layers
+        use_interleaved_ids=use_interleaved_ids # Pass the interleaved mode parameter
     )
     logger.info(f"Model created with {attn_layers} attention layers, {attn_heads} heads")
 
@@ -378,7 +378,7 @@ def train(
         model, optimizer, lr_scheduler
     )
 
-    # 初始化 NDCGAccumulator 实例
+    # Initialize NDCGAccumulator instance
     metrics_accumulator = TopKAccumulator(ks=[1, 5, 10])
     ndcg_accumulator = NDCGAccumulator(ks=[1, 5, 10])
     num_params = sum(p.numel() for p in model.parameters())
@@ -398,12 +398,12 @@ def train(
                     model_output = model(tokenized_data)
                     loss = model_output.loss / gradient_accumulate_every
                     
-                    # 调试信息：检查损失是否有梯度
+                    # Debug info: check if the loss has a gradient
                     if iter == 0 and _ == 0:
-                        logger.info(f"损失值: {loss.item()}")
-                        logger.info(f"损失需要梯度: {loss.requires_grad}")
-                        logger.info(f"模型参数总数: {sum(p.numel() for p in model.parameters())}")
-                        logger.info(f"需要梯度的参数总数: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+                        logger.info(f"Loss value: {loss.item()}")
+                        logger.info(f"Loss requires grad: {loss.requires_grad}")
+                        logger.info(f"Total model parameters: {sum(p.numel() for p in model.parameters())}")
+                        logger.info(f"Parameters with requires_grad: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
                         
                     total_loss += loss
                 
@@ -422,7 +422,7 @@ def train(
 
             accelerator.wait_for_everyone()
             
-            # 记录训练指标
+            # Log training metrics
             if accelerator.is_main_process:
                 current_lr = optimizer.param_groups[0]["lr"]
                 loss_value = total_loss.cpu().item()
@@ -451,14 +451,14 @@ def train(
                     
                     if accelerator.is_main_process:
                         eval_debug_metrics = compute_debug_metrics(tokenized_data, model_output_eval, "eval")
-                        # 将eval_loss添加到eval_debug_metrics中，而不是在update时重复传递
+                        # Add eval_loss to eval_debug_metrics instead of passing it separately during update
                         eval_debug_metrics["eval_loss"] = model_output_eval.loss.detach().cpu().item()
                 
                 if accelerator.is_main_process:
                     avg_eval_loss = np.mean(eval_losses)
                     logger.info(f"Evaluation at iteration {iter+1}: eval_loss={avg_eval_loss:.4f}")
                     
-                    # 修复：检查eval_debug_metrics中是否已包含eval_loss，如果有则不再单独传递
+                    # Fix: Check if eval_debug_metrics already contains eval_loss, if so, don't pass it separately
                     if "eval_loss" in eval_debug_metrics:
                         metrics_tracker.update(iter+1, **eval_debug_metrics)
                     else:
@@ -468,8 +468,8 @@ def train(
                 model.eval()
                 model.enable_generation = True
                 
-                # 优化：使用临时变量存储原始配置，而不是直接修改全局配置
-                # 创建上下文管理器类来临时禁用torch.compile
+                # Optimization: Use temporary variables to store original config instead of modifying global config directly
+                # Create a context manager class to temporarily disable torch.compile
                 class TempDisableDynamo:
                     def __init__(self):
                         pass
@@ -479,175 +479,175 @@ def train(
                         self.original_dynamic_shapes = torch._dynamo.config.dynamic_shapes
                         self.original_optimize_ddp = torch._dynamo.config.optimize_ddp
                         
-                        # 临时修改配置
+                        # Temporarily modify config
                         torch._dynamo.config.cache_size_limit = 0
                         torch._dynamo.config.dynamic_shapes = False
                         torch._dynamo.config.optimize_ddp = False
                     
                     def __exit__(self, exc_type, exc_val, exc_tb):
-                        # 恢复原始配置
+                        # Restore original config
                         torch._dynamo.config.cache_size_limit = self.original_cache_size_limit
                         torch._dynamo.config.dynamic_shapes = self.original_dynamic_shapes
                         torch._dynamo.config.optimize_ddp = self.original_optimize_ddp
                 
-                # 在评估期间临时禁用动态编译
+                # Temporarily disable dynamic compilation during evaluation
                 with TempDisableDynamo():
-                    # 在全面评估部分，需要同时使用两个累加器
+                    # In the full evaluation section, both accumulators are needed
                     with tqdm(eval_dataloader, desc=f'Eval {iter+1}', disable=not accelerator.is_main_process) as pbar_eval:
-                            for batch_idx, batch in enumerate(pbar_eval): # 添加batch_idx用于选择样本
+                            for batch_idx, batch in enumerate(pbar_eval): # Add batch_idx for sample selection
                                 try:
                                     data = batch_to(batch, device)
                                     tokenized_data = tokenizer(data)
-                
+        
                                     generated = model.generate_next_sem_id(tokenized_data, top_k=True, temperature=1)
                                     actual, top_k = tokenized_data.sem_ids_fut, generated.sem_ids
-                
-                                    logger.info(f"实际形状: {actual.shape}, 预测形状: {top_k.shape}")
+        
+                                    logger.info(f"Actual shape: {actual.shape}, Predicted shape: {top_k.shape}")
                                     
-                                    # 检查拼接模式并更新标签部分
+                                    # Check for concatenation mode and update the tag part
                                     if use_concatenated_ids and hasattr(data, 'tags_indices'):
-                                        logger.info("修复拼接模式下的标签问题...")
+                                        logger.info("Fixing tag issue in concatenation mode...")
                                         
-                                        # 检查维度不匹配
+                                        # Check for dimension mismatch
                                         if actual.size(-1) != top_k.size(-1):
-                                            logger.info(f"检测到维度不匹配: actual={actual.size()}, top_k={top_k.size()}")
+                                            logger.info(f"Dimension mismatch detected: actual={actual.size()}, top_k={top_k.size()}")
                                             
-                                            # 获取语义ID的层数
+                                            # Get the number of semantic ID layers
                                             num_semantic_layers = n_sem_layers
                                             
-                                            # 如果生成的ID包含标签部分但实际ID没有
+                                            # If the generated IDs include a tag part but the actual IDs do not
                                             if top_k.size(-1) > num_semantic_layers and actual.size(-1) == num_semantic_layers:
-                                                logger.info("实际ID缺少标签部分，尝试添加...")
+                                                logger.info("Actual IDs are missing the tag part, attempting to add it...")
                                                 
-                                                # 检查数据中是否有标签索引
+                                                # Check if tag indices exist in the data
                                                 if hasattr(data, 'tags_indices') and data.tags_indices is not None:
                                                     batch_size = actual.size(0)
                                                     
-                                                    # 获取标签索引
+                                                    # Get the tag indices
                                                     tags_indices = data.tags_indices
-                                                    logger.info(f"标签索引形状: {tags_indices.shape}")
+                                                    logger.info(f"Tag indices shape: {tags_indices.shape}")
                                                     
-                                                    # 打印原始标签索引和标签类别数量
-                                                    logger.info(f"标签类别数量: {tokenizer.tag_class_counts}")
+                                                    # Print original tag indices and number of tag classes
+                                                    logger.info(f"Tag class counts: {tokenizer.tag_class_counts}")
                                                     if batch_size > 0:
                                                         sample_tags = tags_indices[0]
-                                                        logger.info(f"样本原始标签索引: {sample_tags.tolist()}")
+                                                        logger.info(f"Sample original tag indices: {sample_tags.tolist()}")
                                                     
-                                                    # 创建新的实际ID张量，包含语义ID和标签ID
+                                                    # Create a new actual ID tensor, including semantic and tag IDs
                                                     num_tag_layers = min(len(tokenizer.tag_class_counts), tags_indices.shape[1])
                                                     
-                                                    # 收集当前的语义ID
+                                                    # Collect the current semantic IDs
                                                     semantic_ids = actual
                                                     
-                                                    # 获取当前样本的标签ID
+                                                    # Get the tag IDs for the current sample
                                                     tag_ids_list = []
                                                     for i in range(num_tag_layers):
                                                         tag_ids = tags_indices[:, i].clone()
                                                         if tokenizer.tag_class_counts is not None and i < len(tokenizer.tag_class_counts):
                                                             special_value = tokenizer.tag_class_counts[i]
-                                                            logger.info(f"第{i+1}层标签特殊值: {special_value}")
+                                                            logger.info(f"Special value for tag layer {i+1}: {special_value}")
                                                             
-                                                            # 创建替换前后的映射
+                                                            # Create a mapping for before and after replacement
                                                             orig_tags = tag_ids.clone()
                                                             tag_ids[tag_ids < 0] = special_value
                                                             
-                                                            # 打印原始值和替换后的值（第一个样本）
+                                                            # Print the original and replaced values (for the first sample)
                                                             if batch_size > 0:
-                                                                logger.info(f"第{i+1}层标签原始值: {orig_tags[0].item()}")
-                                                                logger.info(f"第{i+1}层标签替换后: {tag_ids[0].item()}")
-                                                                
+                                                                logger.info(f"Original tag value for layer {i+1}: {orig_tags[0].item()}")
+                                                                logger.info(f"Replaced tag value for layer {i+1}: {tag_ids[0].item()}")
+                                                            
                                                         tag_ids_list.append(tag_ids.unsqueeze(1))
                                                     
-                                                    # 拼接所有标签ID
+                                                    # Concatenate all tag IDs
                                                     tag_ids = torch.cat(tag_ids_list, dim=1)
-                                                    logger.info(f"标签ID形状: {tag_ids.shape}")
+                                                    logger.info(f"Tag IDs shape: {tag_ids.shape}")
                                                     
-                                                    # 打印第一个样本的标签ID
+                                                    # Print the tag IDs for the first sample
                                                     if batch_size > 0:
-                                                        logger.info(f"第一个样本的标签ID: {tag_ids[0].tolist()}")
+                                                        logger.info(f"Tag IDs for the first sample: {tag_ids[0].tolist()}")
                                                     
-                                                    # 拼接语义ID和标签ID
-                                                    # 注意：这里我们需要处理不同的维度情况
+                                                    # Concatenate semantic IDs and tag IDs
+                                                    # Note: We need to handle different dimension cases here
                                                     if semantic_ids.dim() == 3:  # [batch, k, semantic_dim]
-                                                        # 复制标签以匹配候选数量
+                                                        # Duplicate tags to match the number of candidates
                                                         expanded_tag_ids = tag_ids.unsqueeze(1).expand(-1, semantic_ids.size(1), -1)
                                                         new_actual = torch.cat([semantic_ids, expanded_tag_ids], dim=2)
-                                                        logger.info(f"3D拼接后形状: {new_actual.shape}")
+                                                        logger.info(f"Shape after 3D concatenation: {new_actual.shape}")
                                                     elif semantic_ids.dim() == 2 and top_k.dim() == 3:  # [batch, semantic_dim] vs [batch, k, total_dim]
-                                                        # 使用语义ID的前num_semantic_layers维度
+                                                        # Use the first num_semantic_layers dimensions of the semantic ID
                                                         new_actual = torch.cat([semantic_ids, tag_ids], dim=1)
-                                                        logger.info(f"2D拼接后形状: {new_actual.shape}")
+                                                        logger.info(f"Shape after 2D concatenation: {new_actual.shape}")
                                                         
-                                                        # 修改指标计算，在计算时将top_k变为[batch, k, semantic_dim]
-                                                        logger.info("指标计算使用共同维度...")
+                                                        # Modify metric calculation, changing top_k to [batch, k, semantic_dim]
+                                                        logger.info("Using common dimensions for metric calculation...")
                                                         
-                                                        # 打印第一个样本用于检查
+                                                        # Print the first sample for checking
                                                         if batch_size > 0:
-                                                            logger.info(f"拼接后第一个样本: semantic_ids={semantic_ids[0].tolist()}, tag_ids={tag_ids[0].tolist()}")
-                                                            logger.info(f"完整拼接ID: {new_actual[0].tolist()}")
+                                                            logger.info(f"First sample after concatenation: semantic_ids={semantic_ids[0].tolist()}, tag_ids={tag_ids[0].tolist()}")
+                                                            logger.info(f"Full concatenated ID: {new_actual[0].tolist()}")
                                                         
                                                         metrics_accumulator.accumulate(actual=new_actual, top_k=top_k)
                                                         ndcg_accumulator.accumulate(actual=new_actual, top_k=top_k)
-                                                        continue  # 跳过后面的指标计算
+                                                        continue  # Skip the subsequent metric calculation
                                                     else:
-                                                        # 简单拼接
+                                                        # Simple concatenation
                                                         new_actual = torch.cat([semantic_ids, tag_ids], dim=1)
-                                                        logger.info(f"其他情况拼接后形状: {new_actual.shape}")
+                                                        logger.info(f"Shape after concatenation in other cases: {new_actual.shape}")
                                                     
-                                                    logger.info(f"拼接后的实际ID形状: {new_actual.shape}")
+                                                    logger.info(f"Shape of actual ID after concatenation: {new_actual.shape}")
                                                     actual = new_actual
-                                    
-                                    # 处理拼接模式下的维度不匹配问题
-                                    if use_concatenated_ids:
-                                        # 确保actual和top_k维度一致
-                                        if actual.size(-1) != top_k.size(-1):
-                                            logger.info(f"检测到维度不匹配: actual={actual.size()}, top_k={top_k.size()}")
-                                            
-                                            # 获取两者共同的维度
-                                            common_dims = min(actual.size(-1), top_k.size(-1))
-                                            
-                                            # 使用共同维度进行指标计算 - 通常是语义ID部分
-                                            metrics_accumulator.accumulate(actual=actual[..., :common_dims], top_k=top_k[..., :common_dims])
-                                            ndcg_accumulator.accumulate(actual=actual[..., :common_dims], top_k=top_k[..., :common_dims])
+                                        
+                                        # Handle dimension mismatch issue in concatenation mode
+                                        if use_concatenated_ids:
+                                            # Ensure actual and top_k dimensions are consistent
+                                            if actual.size(-1) != top_k.size(-1):
+                                                logger.info(f"Dimension mismatch detected: actual={actual.size()}, top_k={top_k.size()}")
+                                                
+                                                # Get the common dimensions between the two
+                                                common_dims = min(actual.size(-1), top_k.size(-1))
+                                                
+                                                # Use common dimensions for metric calculation - typically the semantic ID part
+                                                metrics_accumulator.accumulate(actual=actual[..., :common_dims], top_k=top_k[..., :common_dims])
+                                                ndcg_accumulator.accumulate(actual=actual[..., :common_dims], top_k=top_k[..., :common_dims])
+                                            else:
+                                                metrics_accumulator.accumulate(actual=actual, top_k=top_k)
+                                                ndcg_accumulator.accumulate(actual=actual, top_k=top_k)
                                         else:
                                             metrics_accumulator.accumulate(actual=actual, top_k=top_k)
                                             ndcg_accumulator.accumulate(actual=actual, top_k=top_k)
-                                    else:
-                                        metrics_accumulator.accumulate(actual=actual, top_k=top_k)
-                                        ndcg_accumulator.accumulate(actual=actual, top_k=top_k)
 
-                                    # 打印随机样本的预测和真实值 (仅在主进程且为评估的第一个批次)
+                                    # Print predictions and ground truth for random samples (only on main process and for the first evaluation batch)
                                     if accelerator.is_main_process and batch_idx == 0:
-                                        num_samples_to_print = 3 # 可以调整打印的样本数量
-                                        # 确保不超出批次大小
+                                        num_samples_to_print = 3 # The number of samples to print can be adjusted
+                                        # Ensure it does not exceed the batch size
                                         actual_samples_to_print = min(num_samples_to_print, actual.size(0)) 
                                         
-                                        # 随机选择样本索引
+                                        # Randomly select sample indices
                                         sample_indices = torch.randperm(actual.size(0))[:actual_samples_to_print]
 
                                         logger.info(f"--- Sample Predictions at Iteration {iter+1} (Batch {batch_idx}) ---")
-                                        # 打印tokenized_data的形状信息
-                                        logger.info(f"tokenized_data.sem_ids_fut形状: {tokenized_data.sem_ids_fut.shape}")
-                                        logger.info(f"tokenized_data.sem_ids形状: {tokenized_data.sem_ids.shape}")
-                                        logger.info(f"实际形状: {actual.shape}, 预测形状: {top_k.shape}")
+                                        # Print shape information of tokenized_data
+                                        logger.info(f"tokenized_data.sem_ids_fut shape: {tokenized_data.sem_ids_fut.shape}")
+                                        logger.info(f"tokenized_data.sem_ids shape: {tokenized_data.sem_ids.shape}")
+                                        logger.info(f"Actual shape: {actual.shape}, Predicted shape: {top_k.shape}")
                                         
-                                        # 打印原始数据的标签信息
+                                        # Print tag information from the original data
                                         if hasattr(data, 'tags_indices') and data.tags_indices is not None:
-                                            logger.info(f"数据标签索引形状: {data.tags_indices.shape}")
+                                            logger.info(f"Data tag indices shape: {data.tags_indices.shape}")
                                             if hasattr(tokenizer, 'tag_class_counts'):
-                                                logger.info(f"标签类别数量: {tokenizer.tag_class_counts}")
+                                                logger.info(f"Tag class counts: {tokenizer.tag_class_counts}")
                                                 
-                                                # 打印标签层次结构说明
-                                                logger.info("标签层次结构说明:")
+                                                # Print explanation of the tag hierarchy
+                                                logger.info("Tag Hierarchy Explanation:")
                                                 for i, count in enumerate(tokenizer.tag_class_counts):
-                                                    # 确定标签类型，根据层次和类别数量
+                                                    # Determine tag type based on hierarchy and number of classes
                                                     if i == 0 and count <= 10:
-                                                        tag_type = "类别"
+                                                        tag_type = "Category"
                                                     elif i == 1 and count <= 50:
-                                                        tag_type = "子类别"
+                                                        tag_type = "Sub-category"
                                                     else:
-                                                        tag_type = "具体标签"
-                                                    logger.info(f"  第{i+1}层 ({tag_type}): {count}个类别, 特殊值={count} (用于无效标签)")
+                                                        tag_type = "Specific Tag"
+                                                    logger.info(f"  Layer {i+1} ({tag_type}): {count} classes, special_value={count} (for invalid tags)")
                                         
                                         for i in range(actual_samples_to_print):
                                             sample_idx = sample_indices[i].item()
@@ -656,95 +656,94 @@ def train(
 
                                             logger.info(f"  Sample {i+1} (Original Index: {sample_idx}):")
                                             
-                                            # 打印原始标签索引
+                                            # Print original tag indices
                                             if hasattr(data, 'tags_indices') and data.tags_indices is not None:
                                                 orig_tags = data.tags_indices[sample_idx]
-                                                logger.info(f"    原始标签索引: {orig_tags.tolist()}")
+                                                logger.info(f"    Original tag indices: {orig_tags.tolist()}")
                                                 
-                                                # 打印标签映射后的结果
+                                                # Print the result after tag mapping
                                                 if hasattr(tokenizer, 'tag_class_counts'):
                                                     mapped_tags = []
                                                     for j, tag_idx in enumerate(orig_tags.tolist()):
                                                         if j < len(tokenizer.tag_class_counts) and tag_idx >= 0:
                                                             mapped_tags.append(tag_idx)
                                                         elif j < len(tokenizer.tag_class_counts):
-                                                            # 无效标签使用特殊值
+                                                            # Use special value for invalid tags
                                                             mapped_tags.append(tokenizer.tag_class_counts[j])
                                                         else:
-                                                            # 超出范围的标签
+                                                            # Out-of-range tags
                                                             mapped_tags.append(-1)
-                                                    logger.info(f"    映射后标签ID: {mapped_tags}")
+                                                    logger.info(f"    Mapped tag IDs: {mapped_tags}")
                                             
-                                            # 获取当前序列的信息（如果可用）
+                                            # Get information about the current sequence (if available)
                                             if hasattr(tokenized_data, 'sem_ids') and tokenized_data.sem_ids is not None:
                                                 current_seq_ids = tokenized_data.sem_ids[sample_idx]
                                                 
-                                                # 获取序列长度和语义ID维度
+                                                # Get sequence length and semantic ID dimension
                                                 seq_len = tokenized_data.seq_mask[sample_idx].sum().item() if hasattr(tokenized_data, 'seq_mask') else current_seq_ids.shape[0]
-                                                # n_sem_layers = n_sem_layers  # 从外部获取 (already defined in outer scope)
                                                 
-                                                # 提取当前序列的ID
-                                                # 假设ID格式为 [pos1_sem1, pos1_sem2, ..., pos1_tag1, pos1_tag2, ..., pos2_sem1, ...]
-                                                # 我们需要提取第一个位置的所有语义ID和标签ID
+                                                # Extract IDs of the current sequence
+                                                # Assuming ID format is [pos1_sem1, pos1_sem2, ..., pos1_tag1, pos1_tag2, ..., pos2_sem1, ...]
+                                                # We need to extract all semantic and tag IDs from the first position
                                                 if seq_len > 0 and n_sem_layers > 0:
-                                                    # 计算每个位置的总ID数
+                                                    # Calculate the total number of IDs per position
                                                     ids_per_pos = current_seq_ids.shape[0] // seq_len
                                                     
-                                                    # 确保位置数量合理
+                                                    # Ensure the number of positions is reasonable
                                                     if ids_per_pos > 0:
-                                                        # 提取第一个位置的ID
+                                                        # Extract IDs from the first position
                                                         first_pos_ids = current_seq_ids[:ids_per_pos]
                                                         
-                                                        # 区分语义ID和标签ID
+                                                        # Differentiate between semantic IDs and tag IDs
                                                         if ids_per_pos >= n_sem_layers:
                                                             current_sem_ids = first_pos_ids[:n_sem_layers]
                                                             if ids_per_pos > n_sem_layers:
                                                                 current_tag_ids = first_pos_ids[n_sem_layers:]
-                                                                logger.info(f"    当前序列语义ID: {current_sem_ids.tolist()}")
-                                                                logger.info(f"    当前序列标签ID: {current_tag_ids.tolist()}")
+                                                                logger.info(f"    Current sequence semantic IDs: {current_sem_ids.tolist()}")
+                                                                logger.info(f"    Current sequence tag IDs: {current_tag_ids.tolist()}")
                                                             else:
-                                                                logger.info(f"    当前序列语义ID: {current_sem_ids.tolist()}")
-                                                                logger.info(f"    当前序列标签ID: []")
+                                                                logger.info(f"    Current sequence semantic IDs: {current_sem_ids.tolist()}")
+                                                                logger.info(f"    Current sequence tag IDs: []")
                                             
                                             if use_concatenated_ids:
-                                                # 如果使用拼接ID，分别展示语义ID和标签ID
-                                                # 假设语义ID在前，标签ID在后
-                                                num_semantic_layers = n_sem_layers # 从外部获取
+                                                # If using concatenated IDs, show semantic and tag IDs separately
+                                                # Assuming semantic IDs come first, followed by tag IDs
+                                                num_semantic_layers = n_sem_layers 
                                                 
-                                                # 打印维度信息
-                                                logger.info(f"    实际ID维度: {actual_ids_sample.shape}")
-                                                logger.info(f"    预测ID维度: {predicted_ids_sample.shape}")
+                                                # Print dimension information
+                                                logger.info(f"    Actual ID dimension: {actual_ids_sample.shape}")
+                                                logger.info(f"    Predicted ID dimension: {predicted_ids_sample.shape}")
                                                 
-                                                # 处理未来序列的实际ID
+                                                # Process the actual IDs of the future sequence
                                                 if actual_ids_sample.dim() == 1:
-                                                    # 一维张量，可能是由于只有语义ID没有标签ID
+                                                    # 1D tensor, possibly because there are only semantic IDs and no tag IDs
                                                     total_dim = actual_ids_sample.shape[0]
                                                     
-                                                    # 检查维度是否足够分离语义ID和标签ID
+                                                    # Check if dimensions are sufficient to separate semantic and tag IDs
                                                     if total_dim >= num_semantic_layers:
                                                         actual_semantic = actual_ids_sample[:num_semantic_layers]
-                                                        # 检查是否有标签部分
+                                                        # Check if there is a tag part
                                                         if total_dim > num_semantic_layers:
                                                             actual_tags = actual_ids_sample[num_semantic_layers:]
                                                         else:
-                                                            # 仅有语义ID
+                                                            # Only semantic IDs
                                                             actual_tags = torch.tensor([], device=actual_ids_sample.device)
                                                     else:
-                                                        logger.warning(f"    警告: 实际ID维度({total_dim})小于语义层数({num_semantic_layers})")
+                                                        logger.warning(f"    Warning: Actual ID dimension ({total_dim}) is smaller than the number of semantic layers ({num_semantic_layers})")
                                                         actual_semantic = actual_ids_sample
                                                         actual_tags = torch.tensor([], device=actual_ids_sample.device)
                                                 else:
-                                                    # 高维张量，可能是批次内部结构
-                                                    logger.warning(f"    警告: 实际ID是高维张量，结构可能不是预期的")
+                                                    # High-dimensional tensor, possibly an internal batch structure
+                                                    logger.warning(f"    Warning: Actual ID is a high-dimensional tensor, structure might not be as expected")
                                                     actual_semantic = actual_ids_sample
                                                     actual_tags = torch.tensor([], device=actual_ids_sample.device)
                                                 
-                                                # 处理预测ID，区分语义ID和标签ID
+                                                # Process predicted IDs, differentiating between semantic and tag IDs
                                                 if predicted_ids_sample.dim() > 1:
-                                                    # 预测ID可能有多个候选，取第一个
+                                                    # Predicted IDs may have multiple candidates, take the first one
                                                     top1_prediction = predicted_ids_sample[0]
                                                     
-                                                    # 检查维度是否足够分离语义ID和标签ID
+                                                    # Check if dimensions are sufficient to separate semantic and tag IDs
                                                     pred_total_dim = top1_prediction.shape[0]
                                                     if pred_total_dim >= num_semantic_layers:
                                                         predicted_semantic = top1_prediction[:num_semantic_layers]
@@ -753,11 +752,11 @@ def train(
                                                         else:
                                                             predicted_tags = torch.tensor([], device=top1_prediction.device)
                                                     else:
-                                                        logger.warning(f"    警告: 预测ID维度({pred_total_dim})小于语义层数({num_semantic_layers})")
+                                                        logger.warning(f"    Warning: Predicted ID dimension ({pred_total_dim}) is smaller than the number of semantic layers ({num_semantic_layers})")
                                                         predicted_semantic = top1_prediction
                                                         predicted_tags = torch.tensor([], device=top1_prediction.device)
                                                 else:
-                                                    # 一维预测，直接分割
+                                                    # 1D prediction, split directly
                                                     pred_total_dim = predicted_ids_sample.shape[0]
                                                     if pred_total_dim >= num_semantic_layers:
                                                         predicted_semantic = predicted_ids_sample[:num_semantic_layers]
@@ -766,58 +765,58 @@ def train(
                                                         else:
                                                             predicted_tags = torch.tensor([], device=predicted_ids_sample.device)
                                                     else:
-                                                        logger.warning(f"    警告: 预测ID维度({pred_total_dim})小于语义层数({num_semantic_layers})")
+                                                        logger.warning(f"    Warning: Predicted ID dimension ({pred_total_dim}) is smaller than the number of semantic layers ({num_semantic_layers})")
                                                         predicted_semantic = predicted_ids_sample
                                                         predicted_tags = torch.tensor([], device=predicted_ids_sample.device)
                                                 
-                                                # 输出语义ID和标签ID
-                                                logger.info(f"    未来语义ID (实际): {actual_semantic.tolist()}")
-                                                logger.info(f"    未来标签ID (实际): {actual_tags.tolist()}")
+                                                # Output semantic IDs and tag IDs
+                                                logger.info(f"    Future Semantic IDs (Actual): {actual_semantic.tolist()}")
+                                                logger.info(f"    Future Tag IDs (Actual): {actual_tags.tolist()}")
                                                 
-                                                # 处理多维预测
+                                                # Handle multi-dimensional predictions
                                                 if predicted_ids_sample.dim() > 1:
-                                                    # 打印所有Top-K候选项的语义ID部分
-                                                    semantic_predictions = [pred[:num_semantic_layers].tolist() for pred in predicted_ids_sample[:5]]  # 只显示前5个
-                                                    logger.info(f"    Top-5 未来语义ID (预测): {semantic_predictions}")
+                                                    # Print the semantic ID part of all Top-K candidates
+                                                    semantic_predictions = [pred[:num_semantic_layers].tolist() for pred in predicted_ids_sample[:5]]  # Show top 5 only
+                                                    logger.info(f"    Top-5 Future Semantic IDs (Predicted): {semantic_predictions}")
                                                     
-                                                    # 如果有足够的维度，打印标签ID部分
+                                                    # If dimensions are sufficient, print the tag ID part
                                                     if predicted_ids_sample.shape[1] > num_semantic_layers:
                                                         tag_predictions = [pred[num_semantic_layers:].tolist() for pred in predicted_ids_sample[:5]]
-                                                        logger.info(f"    Top-5 未来标签ID (预测): {tag_predictions}")
+                                                        logger.info(f"    Top-5 Future Tag IDs (Predicted): {tag_predictions}")
                                                     else:
-                                                        logger.info(f"    未来标签ID (预测): [] (预测ID维度不足)")
+                                                        logger.info(f"    Future Tag IDs (Predicted): [] (Predicted ID dimension is insufficient)")
                                                 else:
-                                                    # 一维预测
-                                                    logger.info(f"    未来语义ID (预测): {predicted_semantic.tolist()}")
-                                                    logger.info(f"    未来标签ID (预测): {predicted_tags.tolist()}")
+                                                    # 1D prediction
+                                                    logger.info(f"    Future Semantic IDs (Predicted): {predicted_semantic.tolist()}")
+                                                    logger.info(f"    Future Tag IDs (Predicted): {predicted_tags.tolist()}")
                                             else:
-                                                logger.info(f"    实际ID: {actual_ids_sample.tolist()}")
-                                                logger.info(f"    预测ID: {predicted_ids_sample.tolist()}")
+                                                logger.info(f"    Actual IDs: {actual_ids_sample.tolist()}")
+                                                logger.info(f"    Predicted IDs: {predicted_ids_sample.tolist()}")
                                         logger.info(f"--- End Sample Predictions ---")
                                 except Exception as e:
-                                    logger.error(f"评估过程中出错: {str(e)}")
+                                    logger.error(f"Error during evaluation: {str(e)}")
                                     import traceback
                                     logger.error(traceback.format_exc())
                                     continue
                 
                 eval_metrics = metrics_accumulator.reduce()
-                ndcg_metrics = ndcg_accumulator.reduce()  # 获取NDCG指标
+                ndcg_metrics = ndcg_accumulator.reduce()  # Get NDCG metrics
                 
                 if accelerator.is_main_process:
                     logger.info(f"Full evaluation at iteration {iter+1}:")
                     for metric_name, metric_value in eval_metrics.items():
                         logger.info(f"  {metric_name}: {metric_value:.4f}")
                     
-                    # 记录NDCG指标
+                    # Log NDCG metrics
                     for metric_name, metric_value in ndcg_metrics.items():
                         logger.info(f"  {metric_name}: {metric_value:.4f}")
                     
-                    # 合并两种指标进行更新
+                    # Merge both types of metrics for update
                     combined_metrics = {**eval_metrics, **ndcg_metrics}
                     metrics_tracker.update(iter+1, **combined_metrics)
                 
                 metrics_accumulator.reset()
-                ndcg_accumulator.reset()  # 重置NDCG累加器
+                ndcg_accumulator.reset()  # Reset NDCG accumulator
 
             if accelerator.is_main_process:
                 if (iter+1) % save_model_every == 0 or iter+1 == iterations:
@@ -837,7 +836,7 @@ def train(
 
             pbar.update(1)
     
-    # 训练结束后绘制并保存所有指标图像
+    # After training, plot and save all metric graphs
     if accelerator.is_main_process:
         plots_dir = os.path.join(log_dir, "plots")
         logger.info(f"Training completed. Saving metric plots to {plots_dir}")
