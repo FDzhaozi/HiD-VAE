@@ -13,7 +13,6 @@ class SeqBatch(NamedTuple):
     seq_mask: Tensor
 
 
-# 新增带标签的序列批次类，专门用于HRqVae训练
 class TaggedSeqBatch(NamedTuple):
     user_ids: Tensor
     ids: Tensor
@@ -35,7 +34,6 @@ class TokenizedSeqBatch(NamedTuple):
     token_type_ids_fut: Tensor
 
 
-# 新增带标签的分词序列批次类，专门用于HRqVae训练
 class TaggedTokenizedSeqBatch(NamedTuple):
     user_ids: Tensor
     sem_ids: Tensor
@@ -48,7 +46,6 @@ class TaggedTokenizedSeqBatch(NamedTuple):
     tags_indices: Tensor
 
 
-# # 新增 HRQVAE 输出结构
 # class HRqVaeOutput(NamedTuple):
 #     embeddings: Tensor
 #     residuals: Tensor
@@ -59,7 +56,6 @@ class TaggedTokenizedSeqBatch(NamedTuple):
 #     tag_pred_accuracy: Tensor
 
 
-# 修改 HRQVAE 计算损失结构
 class HRqVaeComputedLosses(NamedTuple):
     loss: Tensor
     reconstruction_loss: Tensor
@@ -69,11 +65,9 @@ class HRqVaeComputedLosses(NamedTuple):
     tag_pred_accuracy: Tensor
     embs_norm: Tensor
     p_unique_ids: Tensor
-    # 新增按层的损失和准确率
     tag_align_loss_by_layer: Tensor = None
     tag_pred_loss_by_layer: Tensor = None
     tag_pred_accuracy_by_layer: Tensor = None
-    # 新增语义ID唯一性约束损失
     sem_id_uniqueness_loss: Tensor = None
 
 
@@ -100,7 +94,6 @@ class HRqVaeOutput:
         self.tag_align_loss = tag_align_loss
         self.tag_pred_loss = tag_pred_loss
         self.tag_pred_accuracy = tag_pred_accuracy
-        # 初始化新添加的属性
         self.tag_align_loss_by_layer = tag_align_loss_by_layer
         self.tag_pred_loss_by_layer = tag_pred_loss_by_layer
         self.tag_pred_accuracy_by_layer = tag_pred_accuracy_by_layer
