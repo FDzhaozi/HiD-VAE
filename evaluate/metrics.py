@@ -35,9 +35,7 @@ class TopKAccumulator:
 
 class NDCGAccumulator:
     """
-    计算NDCG (Normalized Discounted Cumulative Gain) 
-    
-    NDCG衡量排序质量，考虑了项目的相关性和排名位置
+    NDCG (Normalized Discounted Cumulative Gain) 
     """
     def __init__(self, ks=[1, 5, 10]):
         self.ks = ks
@@ -48,14 +46,14 @@ class NDCGAccumulator:
         self.metrics = defaultdict(float)
     
     def _dcg_at_k(self, relevances, k):
-        """计算DCG@k"""
+        """DCG@k"""
         relevances = relevances[:k]
         gains = 2 ** relevances - 1
         discounts = np.log2(np.arange(2, len(relevances) + 2))
         return np.sum(gains / discounts)
     
     def _ndcg_at_k(self, relevances, k):
-        """计算NDCG@k"""
+        """NDCG@k"""
         dcg = self._dcg_at_k(relevances, k)
         # 理想情况下的排序（相关性降序排列）
         ideal_relevances = np.sort(relevances)[::-1]
@@ -64,11 +62,7 @@ class NDCGAccumulator:
     
     def accumulate(self, actual: Tensor, top_k: Tensor) -> None:
         """
-        计算NDCG指标
-        
-        参数:
-            actual: 形状为 [B, D] 的张量，表示实际的semantic ID
-            top_k: 形状为 [B, K, D] 的张量，表示预测的top-k结果
+        NDCG
         """
         B, D = actual.shape
         pos_match = (rearrange(actual, "b d -> b 1 d") == top_k)
