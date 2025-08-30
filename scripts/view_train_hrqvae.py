@@ -1,6 +1,6 @@
 import gin
 import os
-# 添加主工作路径方便导入包
+# Add the main working path to facilitate package import
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
@@ -28,12 +28,12 @@ from tqdm import tqdm
 
 import torch._dynamo
 
-# 抑制警告信息
+# Suppress warning messages
 warnings.filterwarnings('ignore')
 logging.getLogger("torch._dynamo.convert_frame").setLevel(logging.ERROR)
 logging.getLogger("torch._inductor.utils").setLevel(logging.ERROR)
 
-# 设置 torch._dynamo 的警告
+# Configure torch._dynamo warnings
 torch._dynamo.config.verbose = False
 torch._dynamo.config.suppress_errors = True
 
@@ -72,26 +72,26 @@ def train(
     tag_class_counts=None,
     tag_embed_dim=768
 ):
-    # 设置日志记录
+    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
     )
     logger = logging.getLogger("hrqvae_view")
     
-    # 打印训练参数
-    logger.info("=== 训练参数 ===")
+    # Print training parameters
+    logger.info("=== Training Parameters ===")
     params = locals()
     for key, value in params.items():
         if key != 'logger':
             logger.info(f"  {key}: {value}")
     
-    # 设置设备
+    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"使用设备: {device}")
+    logger.info(f"Using device: {device}")
     
-    # 加载数据集
-    logger.info(f"正在加载数据集: {dataset}, 分割: {dataset_split}")
+    # Load dataset
+    logger.info(f"Loading dataset: {dataset}, split: {dataset_split}")
     train_dataset = ItemData(
         root=dataset_folder, 
         dataset=dataset, 
@@ -99,75 +99,75 @@ def train(
         train_test_split="train" if do_eval else "all", 
         split=dataset_split
     )
-    logger.info(f"数据集大小: {len(train_dataset)}")
+    logger.info(f"Dataset size: {len(train_dataset)}")
     
-    # 检查数据集是否包含标签信息
+    # Check if the dataset contains tag information
     has_tags = getattr(train_dataset, 'has_tags', False)
     if not has_tags:
-        logger.warning("数据集中没有标签信息，将禁用标签对齐和预测功能")
+        logger.warning("No tag information in the dataset, disabling tag alignment and prediction features")
         tag_alignment_weight = 0.0
         tag_prediction_weight = 0.0
     else:
-        logger.info("数据集包含标签信息")
+        logger.info("Dataset contains tag information")
         
-        # 确保只使用与vae_n_layers匹配的标签层数
-        # 检查标签数据的形状
+        # Ensure only the number of tag layers matching vae_n_layers is used
+        # Check the shape of the tag data
         sample_data = train_dataset[0]
         if hasattr(sample_data, 'tags_emb') and sample_data.tags_emb is not None:
             logger.info(f"sample_data.tags_emb.shape = {sample_data.tags_emb.shape}")
             actual_tag_layers = sample_data.tags_emb.shape[1]
-            logger.info(f"数据集标签层数: {actual_tag_layers}")
+            logger.info(f"Number of tag layers in dataset: {actual_tag_layers}")
             
             if actual_tag_layers != vae_n_layers:
-                logger.warning(f"标签层数({actual_tag_layers})与模型层数({vae_n_layers})不匹配")
+                logger.warning(f"Number of tag layers ({actual_tag_layers}) does not match the number of model layers ({vae_n_layers})")
                 
-                # 直接对整个数据集进行操作
+                # Operate directly on the entire dataset
                 if actual_tag_layers > vae_n_layers:
-                    logger.warning(f"将裁剪数据集标签，只保留前{vae_n_layers}层")
-                    # 裁剪标签嵌入
+                    logger.warning(f"Trimming dataset tags, keeping only the first {vae_n_layers} layers")
+                    # Trim tag embeddings
                     if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None:
                         train_dataset.tags_emb = train_dataset.tags_emb[:, :vae_n_layers, :]
                     
-                    # 裁剪标签索引
+                    # Trim tag indices
                     if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None:
                         train_dataset.tags_indices = train_dataset.tags_indices[:, :vae_n_layers]
                     
-                    logger.info(f"裁剪后 train_dataset.tags_emb.shape = {train_dataset.tags_emb.shape if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None else 'None'}")
-                    logger.info(f"裁剪后 train_dataset.tags_indices.shape = {train_dataset.tags_indices.shape if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None else 'None'}")
+                    logger.info(f"Shape after trimming train_dataset.tags_emb = {train_dataset.tags_emb.shape if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None else 'None'}")
+                    logger.info(f"Shape after trimming train_dataset.tags_indices = {train_dataset.tags_indices.shape if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None else 'None'}")
                 else:
-                    logger.warning(f"模型层数({vae_n_layers})大于标签层数({actual_tag_layers})，将填充数据集标签")
-                    # 填充标签嵌入
+                    logger.warning(f"Number of model layers ({vae_n_layers}) is greater than the number of tag layers ({actual_tag_layers}), will pad dataset tags")
+                    # Pad tag embeddings
                     if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None:
                         tag_embed_shape = train_dataset.tags_emb.shape
                         padded_tags_emb = torch.zeros((tag_embed_shape[0], vae_n_layers, tag_embed_shape[2]), 
-                                                     dtype=train_dataset.tags_emb.dtype)
+                                                      dtype=train_dataset.tags_emb.dtype)
                         padded_tags_emb[:, :actual_tag_layers, :] = train_dataset.tags_emb
                         train_dataset.tags_emb = padded_tags_emb
                     
-                    # 填充标签索引
+                    # Pad tag indices
                     if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None:
                         tag_indices_shape = train_dataset.tags_indices.shape
                         padded_tags_indices = torch.ones((tag_indices_shape[0], vae_n_layers), 
-                                                        dtype=train_dataset.tags_indices.dtype) * -1
+                                                         dtype=train_dataset.tags_indices.dtype) * -1
                         padded_tags_indices[:, :actual_tag_layers] = train_dataset.tags_indices
                         train_dataset.tags_indices = padded_tags_indices
                     
-                    logger.info(f"填充后 train_dataset.tags_emb.shape = {train_dataset.tags_emb.shape if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None else 'None'}")
-                    logger.info(f"填充后 train_dataset.tags_indices.shape = {train_dataset.tags_indices.shape if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None else 'None'}")
+                    logger.info(f"Shape after padding train_dataset.tags_emb = {train_dataset.tags_emb.shape if hasattr(train_dataset, 'tags_emb') and train_dataset.tags_emb is not None else 'None'}")
+                    logger.info(f"Shape after padding train_dataset.tags_indices = {train_dataset.tags_indices.shape if hasattr(train_dataset, 'tags_indices') and train_dataset.tags_indices is not None else 'None'}")
     
     
     
-    logger.info(f"最终使用的标签类别数量: {tag_class_counts}")
+    logger.info(f"Final number of tag classes used: {tag_class_counts}")
     
-    # 确保标签类别数量与层数匹配
-    assert len(tag_class_counts) == vae_n_layers, f"标签类别数量 {len(tag_class_counts)} 与层数 {vae_n_layers} 不匹配"
+    # Ensure the number of tag classes matches the number of layers
+    assert len(tag_class_counts) == vae_n_layers, f"Number of tag classes {len(tag_class_counts)} does not match number of layers {vae_n_layers}"
     
-    # 创建数据加载器
+    # Create data loader
     train_sampler = BatchSampler(RandomSampler(train_dataset), batch_size, False)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=None, collate_fn=lambda batch: batch)
     
-    # 创建模型
-    logger.info("=== 创建模型 ===")
+    # Create model
+    logger.info("=== Creating Model ===")
     model = HRqVae(
         input_dim=vae_input_dim,
         embed_dim=vae_embed_dim,
@@ -187,63 +187,63 @@ def train(
     )
     model = model.to(device)
     
-    # 打印模型结构
-    logger.info("=== 模型结构 ===")
-    logger.info(f"输入维度: {vae_input_dim}")
-    logger.info(f"嵌入维度: {vae_embed_dim}")
-    logger.info(f"隐藏层维度: {vae_hidden_dims}")
-    logger.info(f"码本大小: {vae_codebook_size}")
-    logger.info(f"层数: {vae_n_layers}")
-    logger.info(f"类别特征数: {vae_n_cat_feats}")
-    logger.info(f"标签类别数量: {tag_class_counts}")
-    logger.info(f"标签嵌入维度: {tag_embed_dim}")
-    logger.info(f"标签对齐权重: {tag_alignment_weight}")
-    logger.info(f"标签预测权重: {tag_prediction_weight}")
+    # Print model structure
+    logger.info("=== Model Structure ===")
+    logger.info(f"Input dimension: {vae_input_dim}")
+    logger.info(f"Embedding dimension: {vae_embed_dim}")
+    logger.info(f"Hidden dimensions: {vae_hidden_dims}")
+    logger.info(f"Codebook size: {vae_codebook_size}")
+    logger.info(f"Number of layers: {vae_n_layers}")
+    logger.info(f"Number of categorical features: {vae_n_cat_feats}")
+    logger.info(f"Tag class counts: {tag_class_counts}")
+    logger.info(f"Tag embedding dimension: {tag_embed_dim}")
+    logger.info(f"Tag alignment weight: {tag_alignment_weight}")
+    logger.info(f"Tag prediction weight: {tag_prediction_weight}")
     
-    # 打印编码器结构
-    logger.info("=== 编码器结构 ===")
+    # Print encoder structure
+    logger.info("=== Encoder Structure ===")
     for name, param in model.encoder.named_parameters():
         logger.info(f"{name}: {param.shape}")
     
-    # 打印量化层结构
-    logger.info("=== 量化层结构 ===")
+    # Print quantization layer structure
+    logger.info("=== Quantization Layer Structure ===")
     for i, layer in enumerate(model.layers):
-        logger.info(f"量化层 {i}:")
+        logger.info(f"Quantization Layer {i}:")
         for name, param in layer.named_parameters():
             logger.info(f"  {name}: {param.shape}")
     
-    # 打印标签预测器结构
-    logger.info("=== 标签预测器结构 ===")
+    # Print tag predictor structure
+    logger.info("=== Tag Predictor Structure ===")
     for i, predictor in enumerate(model.tag_predictors):
-        logger.info(f"标签预测器 {i}:")
+        logger.info(f"Tag Predictor {i}:")
         for name, param in predictor.named_parameters():
             logger.info(f"  {name}: {param.shape}")
     
-    # 打印标签投影器结构
-    logger.info("=== 标签投影器结构 ===")
+    # Print tag projector structure
+    logger.info("=== Tag Projector Structure ===")
     for i, projector in enumerate(model.tag_projectors):
-        logger.info(f"标签投影器 {i}:")
+        logger.info(f"Tag Projector {i}:")
         for name, param in projector.named_parameters():
             logger.info(f"  {name}: {param.shape}")
     
-    # 打印解码器结构
-    logger.info("=== 解码器结构 ===")
+    # Print decoder structure
+    logger.info("=== Decoder Structure ===")
     for name, param in model.decoder.named_parameters():
         logger.info(f"{name}: {param.shape}")
     
-    # 创建优化器
+    # Create optimizer
     optimizer = AdamW(
         params=model.parameters(),
         lr=learning_rate,
         weight_decay=weight_decay
     )
     
-    # 加载预训练模型（如果有）
+    # Load pretrained model (if any)
     if pretrained_hrqvae_path is not None:
-        logger.info(f"加载预训练模型: {pretrained_hrqvae_path}")
+        logger.info(f"Loading pretrained model: {pretrained_hrqvae_path}")
         model.load_pretrained(pretrained_hrqvae_path)
     
-    # 创建分词器
+    # Create tokenizer
     tokenizer = SemanticIdTokenizer(
         input_dim=vae_input_dim,
         hidden_dims=vae_hidden_dims,
@@ -257,19 +257,19 @@ def train(
     )
     tokenizer.rq_vae = model
     
-    # 运行一轮前向传播
-    logger.info("=== 运行前向传播 ===")
+    # Run one forward pass
+    logger.info("=== Running Forward Pass ===")
     model.eval()
     
-    # 获取一个批次的数据
+    # Get a batch of data
     train_iter = iter(train_dataloader)
     batch = next(train_iter)
     data = batch_to(batch, device)
     
-    # 打印输入数据形状
-    logger.info(f"输入数据形状: {data.x.shape}")
-    # 打印输入数据的多个字段的形状
-    logger.info("=== 输入数据字段形状 ===")
+    # Print input data shape
+    logger.info(f"Input data shape: {data.x.shape}")
+    # Print shapes of multiple fields in the input data
+    logger.info("=== Input Data Field Shapes ===")
     for field_name in data._fields:
         field_value = getattr(data, field_name)
         if isinstance(field_value, torch.Tensor):
@@ -277,174 +277,174 @@ def train(
         elif field_value is not None:
             logger.info(f"  {field_name}: {type(field_value)}")
     
-    # 检查是否有标签数据
+    # Check for tag data
     has_tag_data = hasattr(data, 'tags_emb') and data.tags_emb is not None
     has_tag_indices = hasattr(data, 'tags_indices') and data.tags_indices is not None
     
     if has_tag_data:
-        logger.info(f"标签嵌入形状: {data.tags_emb.shape}")
+        logger.info(f"Tag embedding shape: {data.tags_emb.shape}")
     else:
-        logger.info("数据中没有标签嵌入")
+        logger.info("No tag embeddings in data")
     
     if has_tag_indices:
-        logger.info(f"标签索引形状: {data.tags_indices.shape}")
+        logger.info(f"Tag indices shape: {data.tags_indices.shape}")
     else:
-        logger.info("数据中没有标签索引")
+        logger.info("No tag indices in data")
     
-    # 运行前向传播
+    # Run forward pass
     with torch.no_grad():
-        t = 0.2  # Gumbel温度
-        # 获取语义ID
-        logger.info("=== 获取语义ID ===")
+        t = 0.2  # Gumbel temperature
+        # Get semantic IDs
+        logger.info("=== Getting Semantic IDs ===")
         quantized = model.get_semantic_ids(data.x, tags_emb=data.tags_emb, tags_indices=data.tags_indices, gumbel_t=t)
     
     
-    logger.info(f"嵌入形状: {quantized.embeddings.shape}")
-    logger.info(f"残差形状: {quantized.residuals.shape}")
-    logger.info(f"语义ID形状: {quantized.sem_ids.shape}")
+    logger.info(f"Embeddings shape: {quantized.embeddings.shape}")
+    logger.info(f"Residuals shape: {quantized.residuals.shape}")
+    logger.info(f"Semantic IDs shape: {quantized.sem_ids.shape}")
     
-    # 处理量化损失
+    # Process quantization loss
     if quantized.quantize_loss.numel() > 1:
-        logger.info(f"量化损失(平均值): {quantized.quantize_loss.mean().item():.4f}")
-        logger.info(f"量化损失形状: {quantized.quantize_loss.shape}")
+        logger.info(f"Quantization loss (mean): {quantized.quantize_loss.mean().item():.4f}")
+        logger.info(f"Quantization loss shape: {quantized.quantize_loss.shape}")
     else:
-        logger.info(f"量化损失: {quantized.quantize_loss.item():.4f}")
+        logger.info(f"Quantization loss: {quantized.quantize_loss.item():.4f}")
     
-    # 处理标签对齐损失
+    # Process tag alignment loss
     if quantized.tag_align_loss.numel() > 1:
-        logger.info(f"标签对齐损失(平均值): {quantized.tag_align_loss.mean().item():.4f}")
-        logger.info(f"标签对齐损失形状: {quantized.tag_align_loss.shape}")
+        logger.info(f"Tag alignment loss (mean): {quantized.tag_align_loss.mean().item():.4f}")
+        logger.info(f"Tag alignment loss shape: {quantized.tag_align_loss.shape}")
     else:
-        logger.info(f"标签对齐损失: {quantized.tag_align_loss.item():.4f}")
+        logger.info(f"Tag alignment loss: {quantized.tag_align_loss.item():.4f}")
     
-    # 处理标签预测损失
+    # Process tag prediction loss
     if quantized.tag_pred_loss.numel() > 1:
-        logger.info(f"标签预测损失(平均值): {quantized.tag_pred_loss.mean().item():.4f}")
-        logger.info(f"标签预测损失形状: {quantized.tag_pred_loss.shape}")
+        logger.info(f"Tag prediction loss (mean): {quantized.tag_pred_loss.mean().item():.4f}")
+        logger.info(f"Tag prediction loss shape: {quantized.tag_pred_loss.shape}")
     else:
-        logger.info(f"标签预测损失: {quantized.tag_pred_loss.item():.4f}")
+        logger.info(f"Tag prediction loss: {quantized.tag_pred_loss.item():.4f}")
     
-    # 新增：输出每层的标签对齐损失和标签预测损失
-    logger.info("=== 每层标签损失详情 ===")
+    # New: Output tag alignment loss and tag prediction loss for each layer
+    logger.info("=== Per-Layer Tag Loss Details ===")
     if hasattr(quantized, 'tag_align_loss_by_layer') and quantized.tag_align_loss_by_layer is not None:
-        logger.info("每层标签对齐损失:")
+        logger.info("Tag alignment loss per layer:")
         for i, loss in enumerate(quantized.tag_align_loss_by_layer):
-            logger.info(f"  层 {i}: {loss.item():.4f}")
+            logger.info(f"  Layer {i}: {loss.item():.4f}")
     else:
-        logger.info("没有每层标签对齐损失信息")
+        logger.info("No per-layer tag alignment loss information")
         
     if hasattr(quantized, 'tag_pred_loss_by_layer') and quantized.tag_pred_loss_by_layer is not None:
-        logger.info("每层标签预测损失:")
+        logger.info("Tag prediction loss per layer:")
         for i, loss in enumerate(quantized.tag_pred_loss_by_layer):
-            logger.info(f"  层 {i}: {loss.item():.4f}")
+            logger.info(f"  Layer {i}: {loss.item():.4f}")
     else:
-        logger.info("没有每层标签预测损失信息")
+        logger.info("No per-layer tag prediction loss information")
         
     if hasattr(quantized, 'tag_pred_accuracy_by_layer') and quantized.tag_pred_accuracy_by_layer is not None:
-        logger.info("每层标签预测准确率:")
+        logger.info("Tag prediction accuracy per layer:")
         for i, acc in enumerate(quantized.tag_pred_accuracy_by_layer):
-            logger.info(f"  层 {i}: {acc.item():.4f}")
+            logger.info(f"  Layer {i}: {acc.item():.4f}")
     else:
-        logger.info("没有每层标签预测准确率信息")
+        logger.info("No per-layer tag prediction accuracy information")
     
-    # 处理标签预测准确率
+    # Process tag prediction accuracy
     if quantized.tag_pred_accuracy.numel() > 1:
-        logger.info(f"标签预测准确率(平均值): {quantized.tag_pred_accuracy.mean().item():.4f}")
-        logger.info(f"标签预测准确率形状: {quantized.tag_pred_accuracy.shape}")
+        logger.info(f"Tag prediction accuracy (mean): {quantized.tag_pred_accuracy.mean().item():.4f}")
+        logger.info(f"Tag prediction accuracy shape: {quantized.tag_pred_accuracy.shape}")
     else:
-        logger.info(f"标签预测准确率: {quantized.tag_pred_accuracy.item():.4f}")
+        logger.info(f"Tag prediction accuracy: {quantized.tag_pred_accuracy.item():.4f}")
     
-    # 打印每层的语义ID分布
-    logger.info("=== 语义ID分布 ===")
+    # Print semantic ID distribution for each layer
+    logger.info("=== Semantic ID Distribution ===")
     for i in range(vae_n_layers):
         layer_ids = quantized.sem_ids[i]
         unique_ids, counts = torch.unique(layer_ids, return_counts=True)
         usage = len(unique_ids) / vae_codebook_size
-        logger.info(f"层 {i} 码本使用率: {usage:.4f} ({len(unique_ids)}/{vae_codebook_size})")
+        logger.info(f"Layer {i} codebook usage: {usage:.4f} ({len(unique_ids)}/{vae_codebook_size})")
         
-        # 打印前10个最常用的ID
+        # Print the top 10 most used IDs
         sorted_indices = torch.argsort(counts, descending=True)
         top_ids = unique_ids[sorted_indices[:10]]
         top_counts = counts[sorted_indices[:10]]
-        logger.info(f"层 {i} 前10个最常用ID: {top_ids.tolist()}")
-        logger.info(f"层 {i} 前10个最常用ID计数: {top_counts.tolist()}")
+        logger.info(f"Layer {i} top 10 most used IDs: {top_ids.tolist()}")
+        logger.info(f"Layer {i} top 10 most used ID counts: {top_counts.tolist()}")
     
-    # 计算重构
-    logger.info("=== 重构结果 ===")
+    # Calculate reconstruction
+    logger.info("=== Reconstruction Result ===")
     x_hat = model.decode(quantized.embeddings.sum(axis=-1))
     mse = torch.nn.functional.mse_loss(x_hat, data.x)
-    logger.info(f"重构MSE: {mse.item():.4f}")
+    logger.info(f"Reconstruction MSE: {mse.item():.4f}")
     
-    # 打印标签预测结果
-    logger.info("=== 标签预测结果 ===")
+    # Print tag prediction results
+    logger.info("=== Tag Prediction Results ===")
     for i in range(vae_n_layers):
         if has_tag_indices:
-            # 获取当前层的标签索引
+            # Get tag indices for the current layer
             logger.info(f"data.tags_indices shape = {data.tags_indices.shape}")
             logger.info(f"data.tags_indices[:, i] shape = {data.tags_indices[:, i].shape}")
-            layer_tag_indices = data.tags_indices[:, i]  # 获取当前层的标签索引
+            layer_tag_indices = data.tags_indices[:, i]  # Get tag indices for the current layer
             valid_mask = (layer_tag_indices >= 0)
             valid_count = valid_mask.sum().item()
             
             if valid_count > 0:
-                logger.info(f"层 {i} 有效标签数量: {valid_count}/{data.x.shape[0]}")
+                logger.info(f"Layer {i} number of valid tags: {valid_count}/{data.x.shape[0]}")
                 
-                # 获取当前层的残差
-                # logger.info(f"quantized   = {quantized}")
+                # Get residuals for the current layer
+                # logger.info(f"quantized  = {quantized}")
                 logger.info(f"quantized.residuals shape = {quantized.residuals.shape}")
-                layer_residual = quantized.residuals[:,:, i]  # 获取当前层的残差
+                layer_residual = quantized.residuals[:,:, i]  # Get residuals for the current layer
                 logger.info(f"layer_residual shape = {layer_residual.shape}")
                 
-                # 使用标签预测器进行预测
+                # Predict using the tag predictor
                 with torch.no_grad():
-                    # 在评估标签预测部分，需要修改为使用拼接embedding
-                    # 大约在第390-410行左右
+                    # In the tag prediction evaluation part, it needs to be modified to use concatenated embeddings
+                    # Around lines 390-410
                     
-                    # 修改前:
+                    # Before modification:
                     # layer_residual = quantized.residuals[:, :, i]
                     # pred_logits = model.tag_predictors[i](layer_residual)
                     
-                    # 修改为:
+                    # Modified to:
                     layer_embs = []
-                    for j in range(i+1):  # 收集前i+1层的embedding
+                    for j in range(i+1):  # Collect embeddings from the first i+1 layers
                         layer_embs.append(quantized.embeddings[:, :, j])
                         
-                    # 拼接前i+1层的embedding
+                    # Concatenate embeddings from the first i+1 layers
                     concat_emb = torch.cat(layer_embs, dim=1)  # [batch_size, (i+1)*embed_dim]
                         
-                    # 使用拼接后的embedding进行预测
+                    # Use the concatenated embedding for prediction
                     pred_logits = model.tag_predictors[i](concat_emb)
                     pred_indices = torch.argmax(pred_logits, dim=-1)
                 
-                # 计算准确率
+                # Calculate accuracy
                 valid_pred = pred_indices[valid_mask]
                 valid_targets = layer_tag_indices[valid_mask]
                 accuracy = (valid_pred == valid_targets).float().mean().item()
                 
-                logger.info(f"层 {i} 标签预测准确率: {accuracy:.4f}")
+                logger.info(f"Layer {i} tag prediction accuracy: {accuracy:.4f}")
                 
-                # 打印前5个样本的预测结果
+                # Print prediction results for the first 5 samples
                 num_samples = min(5, valid_count)
                 valid_indices = torch.where(valid_mask)[0][:num_samples]
                 
                 for j, idx in enumerate(valid_indices):
-                    logger.info(f"  样本 {j}: 预测={pred_indices[idx].item()}, 真实={layer_tag_indices[idx].item()}")
+                    logger.info(f"  Sample {j}: Predicted={pred_indices[idx].item()}, True={layer_tag_indices[idx].item()}")
             else:
-                logger.info(f"层 {i} 没有有效标签")
+                logger.info(f"Layer {i} has no valid tags")
         else:
-            logger.info(f"层 {i} 没有标签索引数据")
+            logger.info(f"Layer {i} has no tag index data")
     
-    logger.info("查看完成")
+    logger.info("Inspection complete")
 
 if __name__ == "__main__":
-    # 解析命令行参数
+    # Parse command-line arguments
     import argparse
-    parser = argparse.ArgumentParser(description='查看HRQVAE模型训练过程')
-    parser.add_argument('config', type=str, help='配置文件路径')
+    parser = argparse.ArgumentParser(description='Inspect the HRQVAE model training process')
+    parser.add_argument('config', type=str, help='Path to the configuration file')
     args = parser.parse_args()
     
-    # 加载配置
+    # Load configuration
     gin.parse_config_file(args.config)
     
-    # 运行训练函数
+    # Run the training function
     train()
