@@ -11,13 +11,13 @@ import gc
 import nltk
 from nltk.corpus import stopwords
 
-# 添加对numpy._core.multiarray._reconstruct的支持
+# Add support for numpy._core.multiarray._reconstruct
 from torch.serialization import add_safe_globals
 try:
     from numpy._core.multiarray import _reconstruct
     add_safe_globals([_reconstruct])
 except ImportError:
-    # 如果无法直接导入，可以尝试通过字符串注册
+    # If direct import fails, try registering via string
     add_safe_globals(['numpy._core.multiarray._reconstruct'])
 
 from collections import defaultdict
@@ -32,7 +32,7 @@ from typing import List
 from typing import Optional
 from sentence_transformers import SentenceTransformer
 
-# 下载NLTK停用词
+# Download NLTK stopwords
 # try:
 #     nltk.data.find('corpora/stopwords')
 # except LookupError:
@@ -57,43 +57,43 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         force_reload: bool = False,
     ) -> None:
         self.split = split
-        self.force_reload = force_reload  # 保存force_reload参数
+        self.force_reload = force_reload  # Save the force_reload parameter
         
-        print(f"\n初始化AmazonReviews数据集: split={split}, force_reload={force_reload}")
+        print(f"\nInitializing AmazonReviews dataset: split={split}, force_reload={force_reload}")
         
-        # 如果强制重新加载，先删除已存在的处理文件
+        # If force_reload is True, delete the processed file first
         if force_reload:
             processed_file_path = osp.join(osp.join(root, 'processed'), f'title_data_{split}_5tags.pt')
             if osp.exists(processed_file_path):
-                print(f"强制重新加载: 删除已存在的处理文件 {processed_file_path}")
+                print(f"Force reloading: Deleting existing processed file {processed_file_path}")
                 os.remove(processed_file_path)
-                print("文件已删除，将重新处理数据")
+                print("File deleted. Reprocessing data.")
         
         super(AmazonReviews, self).__init__(
             root, transform, pre_transform, force_reload
         )
         
-        # 修改torch_geometric的加载行为，确保使用weights_only=False
-        # 保存原始函数
+        # Modify torch_geometric's loading behavior to ensure weights_only=False
+        # Save the original function
         original_torch_load = torch.load
         
-        # 创建一个包装函数，强制使用weights_only=False
+        # Create a wrapper function to force weights_only=False
         def patched_torch_load(*args, **kwargs):
             kwargs['weights_only'] = False
             return original_torch_load(*args, **kwargs)
         
-        # 临时替换torch.load
+        # Temporarily replace torch.load
         torch.load = patched_torch_load
         
         try:
-            # 尝试加载数据
-            print("尝试加载数据，使用weights_only=False...")
+            # Try to load the data
+            print("Attempting to load data with weights_only=False...")
             self.load(self.processed_paths[0], data_cls=HeteroData)
-            print("数据加载成功!")
+            print("Data loaded successfully!")
         except Exception as e:
-            print(f"加载数据时出错: {str(e)}")
+            print(f"Error loading data: {str(e)}")
         finally:
-            # 恢复原始函数
+            # Restore the original function
             torch.load = original_torch_load
     
     @property
@@ -146,37 +146,37 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
     def process(self, max_seq_len=20) -> None:
         def show_memory_usage():
             process = psutil.Process()
-            print(f"内存使用: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+            print(f"Memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
         
-        print("\n=== 开始处理Amazon数据集 ===")
+        print("\n=== Start processing Amazon dataset ===")
         show_memory_usage()
         data = HeteroData()
 
-        print(f"\n正在加载 {self.split} 数据集的映射文件...")
+        print(f"\nLoading mapping files for {self.split} dataset...")
         with open(os.path.join(self.raw_dir, self.split, "datamaps.json"), 'r') as f:
             data_maps = json.load(f)    
-        print(f"商品ID映射数量: {len(data_maps['item2id'])}")
+        print(f"Number of item ID mappings: {len(data_maps['item2id'])}")
 
-        print("\n构建用户序列...")
+        print("\nBuilding user sequences...")
         sequences = self.train_test_split(max_seq_len=max_seq_len)
-        print(f"训练集序列数: {len(sequences['train'])}")
-        print(f"验证集序列数: {len(sequences['eval'])}")
-        print(f"测试集序列数: {len(sequences['test'])}")
-        print("\n序列示例:")
-        print(f"用户ID: {sequences['train']['userId'][0]}")
-        print(f"商品序列: {sequences['train']['itemId'][0][:5]}... (展示前5个)")
-        print(f"目标商品: {sequences['train']['itemId_fut'][0]}")
+        print(f"Number of training sequences: {len(sequences['train'])}")
+        print(f"Number of evaluation sequences: {len(sequences['eval'])}")
+        print(f"Number of test sequences: {len(sequences['test'])}")
+        print("\nSequence example:")
+        print(f"User ID: {sequences['train']['userId'][0]}")
+        print(f"Item sequence: {sequences['train']['itemId'][0][:5]}... (showing first 5)")
+        print(f"Target item: {sequences['train']['itemId_fut'][0]}")
 
         data["user", "rated", "item"].history = {
             k: self._df_to_tensor_dict(v, ["itemId"])
             for k, v in sequences.items() 
         }
         
-        print("\n处理商品特征...")
+        print("\nProcessing item features...")
         asin2id = pd.DataFrame([{"asin": k, "id": self._remap_ids(int(v))} for k, v in data_maps["item2id"].items()])
-        print(f"商品ASIN到ID的映射数量: {len(asin2id)}")
+        print(f"Number of item ASIN to ID mappings: {len(asin2id)}")
 
-        print("\n加载商品元数据...")
+        print("\nLoading item metadata...")
         item_data = (
             pd.DataFrame([
                 meta for meta in
@@ -186,87 +186,87 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
             .sort_values(by="id")
             .fillna({"brand": "Unknown"})
         )
-        print(f"商品总数: {len(item_data)}")
-        print("\n商品数据示例:")
+        print(f"Total number of items: {len(item_data)}")
+        print("\nItem data example:")
         print(item_data.iloc[0][["title", "brand", "categories", "price"]].to_dict())
 
-        # 展平类别列表
+        # Flatten category list
         def flatten_categories(categories):
-            """将嵌套的类别列表展平为单一列表"""
+            """Flattens a nested list of categories into a single list."""
             flattened = []
             for cat in categories:
                 if isinstance(cat, list):
                     flattened.extend(cat)
                 else:
                     flattened.append(cat)
-            return list(dict.fromkeys(flattened))  # 去重
+            return list(dict.fromkeys(flattened))  # Remove duplicates
         
-        print("\n处理商品类别...")
+        print("\nProcessing item categories...")
         item_data['flat_categories'] = item_data['categories'].apply(flatten_categories)
         
-        # 显示类别处理示例
-        print("\n类别展平示例:")
+        # Show category processing example
+        print("\nCategory flattening example:")
         sample_idx = 0
-        print(f"原始类别: {item_data.iloc[sample_idx]['categories']}")
-        print(f"展平后: {item_data.iloc[sample_idx]['flat_categories']}")
+        print(f"Original categories: {item_data.iloc[sample_idx]['categories']}")
+        print(f"Flattened: {item_data.iloc[sample_idx]['flat_categories']}")
         
-        # 处理类别，确保每个商品有5个类别标签
+        # Process categories to ensure each item has 5 tags
         def process_categories_to_five_tags(row):
             import re
             import random
             
-            # 获取展平后的类别
+            # Get flattened categories
             cats = row['flat_categories']
             
-            # 删除第一个标签（如果存在）
+            # Remove the first tag (if it exists)
             if len(cats) > 0:
                 cats = cats[1:]
             
-            # 获取停用词
+            # Get stopwords
             stop_words = set(stopwords.words('english'))
             
-            # 如果类别不足5个，从标题中提取单词补充
+            # If less than 5 categories, extract words from the title to supplement
             if len(cats) < 5:
-                # 从标题中提取单词
+                # Extract words from the title
                 title_words = re.findall(r'\b[A-Za-z]{3,}\b', str(row['title']))
-                # 去除停用词、去除重复并排除已在类别中的单词
+                # Remove stopwords, duplicates, and words already in categories
                 title_words = [w for w in title_words if w.lower() not in stop_words and 
-                              w.lower() not in [c.lower() for c in cats]]
+                                w.lower() not in [c.lower() for c in cats]]
                 
-                # 如果标题词不够，添加品牌
+                # If title words are not enough, add the brand
                 if len(title_words) + len(cats) < 5 and row['brand'] != "Unknown":
                     if row['brand'].lower() not in [c.lower() for c in cats]:
                         title_words.append(row['brand'])
                 
-                # 随机选择足够的单词补充到5个
-                random.seed(42 + row['id'])  # 确保结果可重现
+                # Randomly select enough words to make up 5
+                random.seed(42 + row['id'])  # Ensure reproducible results
                 needed = 5 - len(cats)
                 
                 selected_words = []
                 while len(selected_words) < needed:
                     if len(title_words) > 0:
                         word = random.choice(title_words)
-                        title_words.remove(word)  # 避免重复选择
+                        title_words.remove(word)  # Avoid re-selecting the same word
                         if word not in selected_words and word.strip() != "":
                             selected_words.append(word)
                     else:
-                        # 如果单词不够，使用通用标签
+                        # If words are still not enough, use generic tags
                         tag_idx = len(selected_words) + 1
                         selected_words.append(f"GenericTag{tag_idx}")
                 
-                # 合并类别和选择的单词
+                # Merge categories and selected words
                 five_tags = cats + selected_words
             else:
-                # 如果类别超过5个，保留前4个，将剩余的合并为第5个
+                # If there are more than 5 categories, keep the first 4 and merge the rest into the 5th
                 if len(cats) > 5:
                     five_tags = cats[:4] + [" ".join(cats[4:])]
                 else:
                     five_tags = cats
             
-            # 确保没有空标签
+            # Ensure no empty tags
             five_tags = [tag if tag.strip() != "" else f"GenericTag{i+1}" for i, tag in enumerate(five_tags)]
             
-            # 确保有5个标签
+            # Ensure there are exactly 5 tags
             while len(five_tags) < 5:
                 five_tags.append(f"GenericTag{len(five_tags)+1}")
                 
@@ -274,69 +274,69 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         
         item_data['five_tags'] = item_data.apply(process_categories_to_five_tags, axis=1)
         
-        # 显示处理后的5个标签示例
-        print("\n处理后的5个标签示例:")
-        for i in range(3):  # 显示3个示例
-            print(f"商品 {i}:")
-            print(f"  原始类别数: {len(item_data.iloc[i]['flat_categories'])}")
-            print(f"  处理后的5个标签: {item_data.iloc[i]['five_tags']}")
+        # Show examples of the 5 processed tags
+        print("\nProcessed 5-tags example:")
+        for i in range(3):  # Show 3 examples
+            print(f"Item {i}:")
+            print(f"  Number of original categories: {len(item_data.iloc[i]['flat_categories'])}")
+            print(f"  Processed 5 tags: {item_data.iloc[i]['five_tags']}")
         
-        # 创建标签索引表
-        print("\n创建标签索引表...")
+        # Create tag index map
+        print("\nCreating tag index map...")
         all_tags = []
         for tags in item_data['five_tags']:
             all_tags.extend(tags)
         
-        # 创建唯一标签列表
+        # Create a list of unique tags
         unique_tags = sorted(list(set(all_tags)))
         tag_to_idx = {tag: idx for idx, tag in enumerate(unique_tags)}
         idx_to_tag = {idx: tag for tag, idx in tag_to_idx.items()}
         
-        print(f"唯一标签数量: {len(unique_tags)}")
-        print(f"前10个标签示例: {unique_tags[:10]}")
+        print(f"Number of unique tags: {len(unique_tags)}")
+        print(f"First 10 tag examples: {unique_tags[:10]}")
         
-        # 将标签转换为索引
+        # Convert tags to indices
         def tags_to_indices(tags_list):
             return [tag_to_idx[tag] for tag in tags_list]
         
         item_data['tags_indices'] = item_data['five_tags'].apply(tags_to_indices)
         
-        print("\n标签索引示例:")
+        print("\nTag index example:")
         for i in range(3):
-            print(f"商品 {i}:")
-            print(f"  标签: {item_data.iloc[i]['five_tags']}")
-            print(f"  索引: {item_data.iloc[i]['tags_indices']}")
+            print(f"Item {i}:")
+            print(f"  Tags: {item_data.iloc[i]['five_tags']}")
+            print(f"  Indices: {item_data.iloc[i]['tags_indices']}")
         
-        # 统计每一层标签的唯一ID数量
-        print("\n统计每一层标签的唯一ID数量...")
-        for layer in range(5):  # 5个层级的标签
-            # 提取当前层的所有标签
+        # Count the number of unique IDs for each tag layer
+        print("\nCounting unique IDs for each tag layer...")
+        for layer in range(5):  # 5 layers of tags
+            # Extract all tags for the current layer
             layer_tags = item_data['five_tags'].apply(lambda x: x[layer] if layer < len(x) else None).dropna().tolist()
             unique_layer_tags = set(layer_tags)
             
-            # 提取当前层的所有标签ID
+            # Extract all tag IDs for the current layer
             layer_ids = item_data['tags_indices'].apply(lambda x: x[layer] if layer < len(x) else None).dropna().tolist()
             unique_layer_ids = set(layer_ids)
             
-            print(f"第{layer+1}层标签:")
-            print(f"  唯一标签数量: {len(unique_layer_tags)}")
-            print(f"  唯一标签ID数量: {len(unique_layer_ids)}")
-            print(f"  标签总量: {len(layer_tags)}")  # 添加标签总量统计
-            print(f"  前5个标签示例: {list(unique_layer_tags)[:5]}")
+            print(f"Layer {layer+1} tags:")
+            print(f"  Number of unique tags: {len(unique_layer_tags)}")
+            print(f"  Number of unique tag IDs: {len(unique_layer_ids)}")
+            print(f"  Total number of tags: {len(layer_tags)}")  # Add total tag count
+            print(f"  Top 5 tag examples: {list(unique_layer_tags)[:5]}")
             
-            # 如果标签数量较多，显示分布情况
+            # If the number of tags is large, show the distribution
             if len(unique_layer_tags) > 10:
                 from collections import Counter
                 tag_counts = Counter(layer_tags)
                 most_common = tag_counts.most_common(5)
-                print(f"  出现最多的5个标签: {most_common}")
+                print(f"  5 most common tags: {most_common}")
                 
-                # 添加标签分布统计
+                # Add tag distribution statistics
                 total_items = len(layer_tags)
                 top5_count = sum(count for _, count in most_common)
-                print(f"  前5个标签覆盖率: {top5_count/total_items*100:.2f}%")
+                print(f"  Top 5 tags coverage: {top5_count/total_items*100:.2f}%")
         
-        print("\n构建商品文本描述...")
+        print("\nBuilding item text descriptions...")
         sentences = item_data.apply(
             lambda row:
                 "Title: " +
@@ -346,45 +346,45 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
                 "Price: " +
                 str(row["price"]) + "; " ,
             axis=1
-        ).tolist()  # 直接转换为列表
+        ).tolist()  # Convert directly to a list
 
-        print("\n文本描述示例:")
+        print("\nText description example:")
         print(sentences[0])
         
-        print("\n开始文本编码...")
+        print("\nStarting text encoding...")
         show_memory_usage()
-        item_emb = self._encode_text_feature_batched(sentences, batch_size=32)  # 减小批大小
-        gc.collect()  # 手动触发垃圾回收
+        item_emb = self._encode_text_feature_batched(sentences, batch_size=32)  # Reduce batch size
+        gc.collect()  # Manually trigger garbage collection
         torch.cuda.empty_cache()
         show_memory_usage()
-        print(f"文本特征维度: {item_emb.shape}")
-        print(f"编码示例(前5维): {item_emb[0,:5]}")
+        print(f"Text feature dimension: {item_emb.shape}")
+        print(f"Encoding example (first 5 dims): {item_emb[0,:5]}")
         
-        # 对5个标签分别进行编码 - 优化内存使用
-        print("\n开始标签编码...")
+        # Encode the 5 tags separately - optimize memory usage
+        print("\nStarting tag encoding...")
         tags_embs = []
-        model = SentenceTransformer('sentence-transformers/sentence-t5-xl')  # 只加载一次模型
+        model = SentenceTransformer('sentence-transformers/sentence-t5-xl')  # Load the model only once
         
         for i in range(5):
-            print(f"\n处理标签{i+1}...")
+            print(f"\nProcessing tag {i+1}...")
             tag_sentences = item_data['five_tags'].apply(lambda x: x[i] if i < len(x) else "").tolist()
             
-            # 分批处理标签编码，每批处理后清理内存
-            batch_size = 16  # 更小的批大小
+            # Process tag encoding in batches, clearing memory after each batch
+            batch_size = 16  # Smaller batch size
             tag_emb = self._encode_text_feature_batched(tag_sentences, model=model, batch_size=batch_size)
             tags_embs.append(tag_emb)
             
-            # 更积极地清理内存
+            # More aggressive memory cleaning
             del tag_sentences
             gc.collect()
             torch.cuda.empty_cache()
             show_memory_usage()
         
-        # 将5个标签的编码合并为一个张量
+        # Stack the 5 tag embeddings into a single tensor
         tags_emb_tensor = torch.stack(tags_embs, dim=1)  # [n_items, 5, emb_dim]
-        print(f"\n合并后的标签特征维度: {tags_emb_tensor.shape}")
+        print(f"\nCombined tag feature dimension: {tags_emb_tensor.shape}")
         
-        # 清理不再需要的变量
+        # Clean up variables that are no longer needed
         del tags_embs, model
         gc.collect()
         torch.cuda.empty_cache()
@@ -395,65 +395,65 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         data['item'].tags = np.array(item_data['five_tags'].tolist())
         data['item'].tags_indices = torch.tensor(item_data['tags_indices'].tolist(), dtype=torch.long)
         
-        # 保存标签索引表
+        # Save the tag index map
         tag_index_dict = {
             'tag_to_idx': tag_to_idx,
             'idx_to_tag': idx_to_tag
         }
         
-        # 获取处理后的文件路径，并在同一目录下保存标签索引表
+        # Get the processed file path and save the tag index map in the same directory
         processed_dir = os.path.dirname(self.processed_paths[0])
         tag_index_path = os.path.join(processed_dir, f'tag_index_{self.split}.pt')
         torch.save(tag_index_dict, tag_index_path)
-        print(f"\n标签索引表已保存至: {tag_index_path}")
+        print(f"\nTag index map saved to: {tag_index_path}")
 
-        print("\n划分训练集和测试集...")
+        print("\nSplitting into training and test sets...")
         gen = torch.Generator()
         gen.manual_seed(42)
         data['item'].is_train = torch.rand(item_emb.shape[0], generator=gen) > 0.05
-        print(f"训练集商品数: {data['item'].is_train.sum().item()}")
-        print(f"测试集商品数: {(~data['item'].is_train).sum().item()}")
+        print(f"Number of training items: {data['item'].is_train.sum().item()}")
+        print(f"Number of test items: {(~data['item'].is_train).sum().item()}")
 
-        print("\n保存处理后的数据...")
-        # 修改torch.save的行为，确保兼容性
+        print("\nSaving processed data...")
+        # Modify torch.save behavior to ensure compatibility
         original_torch_save = torch.save
         def patched_torch_save(*args, **kwargs):
             kwargs['_use_new_zipfile_serialization'] = False
             return original_torch_save(*args, **kwargs)
         
-        # 临时替换torch.save
+        # Temporarily replace torch.save
         torch.save = patched_torch_save
         
         try:
             self.save([data], self.processed_paths[0])
-            print("数据保存成功!")
+            print("Data saved successfully!")
         except Exception as e:
-            print(f"保存数据时出错: {str(e)}")
+            print(f"Error saving data: {str(e)}")
         finally:
-            # 恢复原始函数
+            # Restore the original function
             torch.save = original_torch_save
             
-        print("=== 数据处理完成 ===\n")
+        print("=== Data processing complete ===\n")
         
     @staticmethod
     def _encode_text_feature_batched(text_feat, model=None, batch_size=32):
-        """分批处理文本编码，优化内存使用"""
+        """Process text encoding in batches to optimize memory usage"""
         if model is None:
             model = SentenceTransformer('sentence-transformers/sentence-t5-xl')
         
         total_samples = len(text_feat)
         embeddings_list = []
         
-        # 将 Series 转换为列表
+        # Convert Series to list
         if isinstance(text_feat, pd.Series):
             text_feat = text_feat.tolist()
         
         for i in range(0, total_samples, batch_size):
             batch_end = min(i + batch_size, total_samples)
-            batch_text = text_feat[i:batch_end]  # 直接使用列表索引
-            print(f"\r处理进度: {batch_end}/{total_samples} ({batch_end/total_samples*100:.1f}%)", end="")
+            batch_text = text_feat[i:batch_end]  # Use list slicing directly
+            print(f"\rProcessing progress: {batch_end}/{total_samples} ({batch_end/total_samples*100:.1f}%)", end="")
             
-            # 确保内存清理
+            # Ensure memory cleanup
             gc.collect()
             torch.cuda.empty_cache()
             
@@ -465,19 +465,19 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
             
             embeddings_list.append(batch_embeddings)
             
-            # 立即删除不再需要的变量
+            # Immediately delete variables that are no longer needed
             del batch_text, batch_embeddings
             
-            # 手动清理内存
+            # Manually clean up memory
             gc.collect()
             torch.cuda.empty_cache()
         
-        print()  # 换行
+        print()  # Newline
         
-        # 合并所有批次的嵌入
+        # Concatenate embeddings from all batches
         result = torch.cat(embeddings_list, dim=0)
         
-        # 清理列表
+        # Clean up list
         del embeddings_list
         gc.collect()
         
@@ -485,7 +485,5 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
 
 
 if __name__ == "__main__":
-    # 重新处理已经下载的文件，并指定一个新的路径
+    # Reprocess already downloaded files and specify a new path
     dataset = AmazonReviews(root="dataset/amazon", split="sports", force_reload=True)
-   
-
