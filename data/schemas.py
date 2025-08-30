@@ -20,7 +20,6 @@ class TaggedSeqBatch(NamedTuple):
     x: Tensor
     x_fut: Tensor
     seq_mask: Tensor
-    # 标签相关字段
     tags_emb: Tensor
     tags_indices: Tensor
 
@@ -41,7 +40,6 @@ class TaggedTokenizedSeqBatch(NamedTuple):
     seq_mask: Tensor
     token_type_ids: Tensor
     token_type_ids_fut: Tensor
-    # 标签相关字段
     tags_emb: Tensor
     tags_indices: Tensor
 
