@@ -49,7 +49,6 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
     
     @property
     def processed_file_names(self) -> str:
-        #return f'data_{self.split}.pt'
         return f'title_data_beauty_5tags.pt'
     
     def download(self) -> None:
@@ -92,34 +91,34 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
         return sequences
     
     def process(self, max_seq_len=20) -> None:
-        print("\n=== 开始处理Amazon数据集 ===")
+        print("\n=== Starting Amazon dataset processing ===")
         data = HeteroData()
 
-        print(f"\n正在加载 {self.split} 数据集的映射文件...")
+        print(f"\nLoading {self.split} dataset mapping files...")
         with open(os.path.join(self.raw_dir, self.split, "datamaps.json"), 'r') as f:
             data_maps = json.load(f)    
-        print(f"商品ID映射数量: {len(data_maps['item2id'])}")
+        print(f"Number of item ID mappings: {len(data_maps['item2id'])}")
 
-        print("\n构建用户序列...")
+        print("\nBuilding user sequences...")
         sequences = self.train_test_split(max_seq_len=max_seq_len)
-        print(f"训练集序列数: {len(sequences['train'])}")
-        print(f"验证集序列数: {len(sequences['eval'])}")
-        print(f"测试集序列数: {len(sequences['test'])}")
-        print("\n序列示例:")
-        print(f"用户ID: {sequences['train']['userId'][0]}")
-        print(f"商品序列: {sequences['train']['itemId'][0][:5]}... (展示前5个)")
-        print(f"目标商品: {sequences['train']['itemId_fut'][0]}")
+        print(f"Training sequences count: {len(sequences['train'])}")
+        print(f"Validation sequences count: {len(sequences['eval'])}")
+        print(f"Test sequences count: {len(sequences['test'])}")
+        print("\nSequence example:")
+        print(f"User ID: {sequences['train']['userId'][0]}")
+        print(f"Item sequence: {sequences['train']['itemId'][0][:5]}... (first 5 items)")
+        print(f"Target item: {sequences['train']['itemId_fut'][0]}")
 
         data["user", "rated", "item"].history = {
             k: self._df_to_tensor_dict(v, ["itemId"])
             for k, v in sequences.items() 
         }
         
-        print("\n处理商品特征...")
+        print("\nProcessing item features...")
         asin2id = pd.DataFrame([{"asin": k, "id": self._remap_ids(int(v))} for k, v in data_maps["item2id"].items()])
-        print(f"商品ASIN到ID的映射数量: {len(asin2id)}")
+        print(f"ASIN to ID mappings count: {len(asin2id)}")
 
-        print("\n加载商品元数据...")
+        print("\nLoading item metadata...")
         item_data = (
             pd.DataFrame([
                 meta for meta in
@@ -129,11 +128,11 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
             .sort_values(by="id")
             .fillna({"brand": "Unknown"})
         )
-        print(f"商品总数: {len(item_data)}")
-        print("\n商品数据示例:")
+        print(f"Total items: {len(item_data)}")
+        print("\nItem data example:")
         print(item_data.iloc[0][["title", "brand", "categories", "price"]].to_dict())
 
-        print("\n构建商品文本描述...")
+        print("\nConstructing item text descriptions...")
         sentences = item_data.apply(
             lambda row:
                 "Title: " +
@@ -146,29 +145,27 @@ class AmazonReviews(InMemoryDataset, PreprocessingMixin):
                 str(row["price"]) + "; ",
             axis=1
         )
-        print("\n文本描述示例:")
+        print("\nText description example:")
         print(sentences.iloc[0])
         
-        print("\n开始文本编码...")
+        print("\nStarting text encoding...")
         item_emb = self._encode_text_feature(sentences)
-        print(f"文本特征维度: {item_emb.shape}")
-        print(f"编码示例(前5维): {item_emb[0,:5]}")
+        print(f"Text feature dimensions: {item_emb.shape}")
+        print(f"Encoded example (first 5 dims): {item_emb[0,:5]}")
         
         data['item'].x = item_emb
         data['item'].text = np.array(sentences)
 
-        print("\n划分训练集和测试集...")
+        print("\nSplitting train and test sets...")
         gen = torch.Generator()
         gen.manual_seed(42)
         data['item'].is_train = torch.rand(item_emb.shape[0], generator=gen) > 0.05
-        print(f"训练集商品数: {data['item'].is_train.sum().item()}")
-        print(f"测试集商品数: {(~data['item'].is_train).sum().item()}")
+        print(f"Training items count: {data['item'].is_train.sum().item()}")
+        print(f"Test items count: {(~data['item'].is_train).sum().item()}")
 
-        print("\n保存处理后的数据...")
+        print("\nSaving processed data...")
         self.save([data], self.processed_paths[0])
-        print("=== 数据处理完成 ===\n")
-        
-
+        print("=== Dataset processing completed ===\n")
 
 
 if __name__ == "__main__":
