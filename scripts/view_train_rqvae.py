@@ -1,9 +1,6 @@
-
-
-
 import gin
 import os
-# 添加主工作路径方便导入包
+# Add the main working directory to facilitate package imports
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
@@ -34,12 +31,12 @@ from tqdm import tqdm
 import torch._dynamo
 
 
-# 抑制警告信息
+# Suppress warning messages
 warnings.filterwarnings('ignore')
 logging.getLogger("torch._dynamo.convert_frame").setLevel(logging.ERROR)
 logging.getLogger("torch._inductor.utils").setLevel(logging.ERROR)
 
-# 设置 torch._dynamo 的警告
+# Configure torch._dynamo warnings
 torch._dynamo.config.verbose = False
 torch._dynamo.config.suppress_errors = True
 
@@ -75,26 +72,26 @@ def train(
     vae_n_layers=3,
     dataset_split="beauty"
 ):
-    # 设置日志记录
+    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
     )
     logger = logging.getLogger("rqvae_view")
     
-    # 打印训练参数
-    logger.info("=== 训练参数 ===")
+    # Print training parameters
+    logger.info("=== Training Parameters ===")
     params = locals()
     for key, value in params.items():
         if key != 'logger':
             logger.info(f"  {key}: {value}")
     
-    # 设置设备
+    # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"使用设备: {device}")
+    logger.info(f"Using device: {device}")
     
-    # 加载数据集
-    logger.info(f"正在加载数据集: {dataset}, 分割: {dataset_split}")
+    # Load dataset
+    logger.info(f"Loading dataset: {dataset}, split: {dataset_split}")
     train_dataset = ItemData(
         root=dataset_folder, 
         dataset=dataset, 
@@ -102,14 +99,14 @@ def train(
         train_test_split="train" if do_eval else "all", 
         split=dataset_split
     )
-    logger.info(f"数据集大小: {len(train_dataset)}")
+    logger.info(f"Dataset size: {len(train_dataset)}")
     
-    # 创建数据加载器
+    # Create data loader
     train_sampler = BatchSampler(RandomSampler(train_dataset), batch_size, False)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=None, collate_fn=lambda batch: batch)
     
-    # 创建模型
-    logger.info("=== 创建模型 ===")
+    # Create model
+    logger.info("=== Creating Model ===")
     model = RqVae(
         input_dim=vae_input_dim,
         embed_dim=vae_embed_dim,
@@ -125,45 +122,45 @@ def train(
     )
     model = model.to(device)
     
-    # 打印模型结构
-    logger.info("=== 模型结构 ===")
-    logger.info(f"输入维度: {vae_input_dim}")
-    logger.info(f"嵌入维度: {vae_embed_dim}")
-    logger.info(f"隐藏层维度: {vae_hidden_dims}")
-    logger.info(f"码本大小: {vae_codebook_size}")
-    logger.info(f"层数: {vae_n_layers}")
-    logger.info(f"类别特征数: {vae_n_cat_feats}")
+    # Print model structure
+    logger.info("=== Model Structure ===")
+    logger.info(f"Input dimension: {vae_input_dim}")
+    logger.info(f"Embedding dimension: {vae_embed_dim}")
+    logger.info(f"Hidden layer dimensions: {vae_hidden_dims}")
+    logger.info(f"Codebook size: {vae_codebook_size}")
+    logger.info(f"Number of layers: {vae_n_layers}")
+    logger.info(f"Number of categorical features: {vae_n_cat_feats}")
     
-    # 打印编码器结构
-    logger.info("=== 编码器结构 ===")
+    # Print encoder structure
+    logger.info("=== Encoder Structure ===")
     for name, param in model.encoder.named_parameters():
         logger.info(f"{name}: {param.shape}")
     
-    # 打印量化层结构
-    logger.info("=== 量化层结构 ===")
+    # Print quantizer structure
+    logger.info("=== Quantizer Structure ===")
     for i, layer in enumerate(model.layers):
-        logger.info(f"量化层 {i}:")
+        logger.info(f"Quantizer layer {i}:")
         for name, param in layer.named_parameters():
             logger.info(f"  {name}: {param.shape}")
     
-    # 打印解码器结构
-    logger.info("=== 解码器结构 ===")
+    # Print decoder structure
+    logger.info("=== Decoder Structure ===")
     for name, param in model.decoder.named_parameters():
         logger.info(f"{name}: {param.shape}")
     
-    # 创建优化器
+    # Create optimizer
     optimizer = AdamW(
         params=model.parameters(),
         lr=learning_rate,
         weight_decay=weight_decay
     )
     
-    # 加载预训练模型（如果有）
+    # Load pretrained model (if any)
     if pretrained_rqvae_path is not None:
-        logger.info(f"加载预训练模型: {pretrained_rqvae_path}")
+        logger.info(f"Loading pretrained model: {pretrained_rqvae_path}")
         model.load_pretrained(pretrained_rqvae_path)
     
-    # 创建分词器
+    # Create tokenizer
     tokenizer = SemanticIdTokenizer(
         input_dim=vae_input_dim,
         hidden_dims=vae_hidden_dims,
@@ -177,19 +174,19 @@ def train(
     )
     tokenizer.rq_vae = model
     
-    # 运行一轮前向传播
-    logger.info("=== 运行前向传播 ===")
+    # Run one forward pass
+    logger.info("=== Running Forward Pass ===")
     model.eval()
     
-    # 获取一个批次的数据
-    train_iter = iter(train_dataloader)  # 创建迭代器
-    batch = next(train_iter)  # 获取一个批次的数据
-    data = batch_to(batch, device)  # 将数据移动到设备
+    # Get a batch of data
+    train_iter = iter(train_dataloader)  # Create an iterator
+    batch = next(train_iter)  # Get a batch of data
+    data = batch_to(batch, device)  # Move data to the device
     
-    # 打印输入数据形状
-    logger.info(f"输入数据形状: {data.x.shape}")
-    # 打印输入数据的多个字段的形状
-    logger.info("=== 输入数据字段形状 ===")
+    # Print input data shape
+    logger.info(f"Input data shape: {data.x.shape}")
+    # Print the shapes of multiple fields in the input data
+    logger.info("=== Input Data Field Shapes ===")
     for field_name in data._fields:
         field_value = getattr(data, field_name)
         if isinstance(field_value, torch.Tensor):
@@ -197,58 +194,58 @@ def train(
         elif field_value is not None:
             logger.info(f"  {field_name}: {type(field_value)}")
     
-    # 运行前向传播
+    # Run forward pass
     with torch.no_grad():
-        t = 0.2  # Gumbel温度
+        t = 0.2  # Gumbel temperature
         model_output = model(data, gumbel_t=t)
     
-    # 打印模型输出
-    logger.info("=== 模型输出 ===")
-    logger.info(f"总损失: {model_output.loss.item():.4f}")
-    logger.info(f"重构损失: {model_output.reconstruction_loss.item():.4f}")
-    logger.info(f"RQVAE损失: {model_output.rqvae_loss.item():.4f}")
-    # logger.info(f"嵌入范数 形状: {model_output.embs_norm}")
-    logger.info(f"嵌入范数 形状: {model_output.embs_norm.shape}")
-    logger.info(f"唯一ID比例: {model_output.p_unique_ids.item():.4f}")
+    # Print model output
+    logger.info("=== Model Output ===")
+    logger.info(f"Total loss: {model_output.loss.item():.4f}")
+    logger.info(f"Reconstruction loss: {model_output.reconstruction_loss.item():.4f}")
+    logger.info(f"RQ-VAE loss: {model_output.rqvae_loss.item():.4f}")
+    # logger.info(f"Embedding norm shape: {model_output.embs_norm}")
+    logger.info(f"Embedding norm shape: {model_output.embs_norm.shape}")
+    logger.info(f"Proportion of unique IDs: {model_output.p_unique_ids.item():.4f}")
     
-    # 获取语义ID
-    logger.info("=== 获取语义ID ===")
+    # Get semantic IDs
+    logger.info("=== Getting Semantic IDs ===")
     quantized = model.get_semantic_ids(data.x, gumbel_t=t)
-    logger.info(f"嵌入形状: {quantized.embeddings.shape}")
-    logger.info(f"残差形状: {quantized.residuals.shape}")
-    logger.info(f"语义ID形状: {quantized.sem_ids.shape}")
+    logger.info(f"Embeddings shape: {quantized.embeddings.shape}")
+    logger.info(f"Residuals shape: {quantized.residuals.shape}")
+    logger.info(f"Semantic IDs shape: {quantized.sem_ids.shape}")
     
-    # 修复：处理量化损失可能是张量的情况
+    # Fix: Handle the case where quantization loss might be a tensor
     if quantized.quantize_loss.numel() > 1:
-        # 如果是多元素张量，计算平均值
-        logger.info(f"量化损失(平均值): {quantized.quantize_loss.mean().item():.4f}")
-        logger.info(f"量化损失形状: {quantized.quantize_loss.shape}")
+        # If it's a multi-element tensor, calculate the mean
+        logger.info(f"Quantization loss (mean): {quantized.quantize_loss.mean().item():.4f}")
+        logger.info(f"Quantization loss shape: {quantized.quantize_loss.shape}")
     else:
-        # 如果是标量，直接使用item()
-        logger.info(f"量化损失: {quantized.quantize_loss.item():.4f}")
+        # If it's a scalar, use .item() directly
+        logger.info(f"Quantization loss: {quantized.quantize_loss.item():.4f}")
     
-    # 打印每层的语义ID分布
-    logger.info("=== 语义ID分布 ===")
+    # Print the semantic ID distribution for each layer
+    logger.info("=== Semantic ID Distribution ===")
     for i in range(vae_n_layers):
         layer_ids = quantized.sem_ids[i]
         unique_ids, counts = torch.unique(layer_ids, return_counts=True)
         usage = len(unique_ids) / vae_codebook_size
-        logger.info(f"层 {i} 码本使用率: {usage:.4f} ({len(unique_ids)}/{vae_codebook_size})")
+        logger.info(f"Layer {i} codebook usage: {usage:.4f} ({len(unique_ids)}/{vae_codebook_size})")
         
-        # 打印前10个最常用的ID
+        # Print the top 10 most used IDs
         sorted_indices = torch.argsort(counts, descending=True)
         top_ids = unique_ids[sorted_indices[:10]]
         top_counts = counts[sorted_indices[:10]]
-        logger.info(f"层 {i} 前10个最常用ID: {top_ids.tolist()}")
-        logger.info(f"层 {i} 前10个最常用ID计数: {top_counts.tolist()}")
+        logger.info(f"Layer {i} top 10 most used IDs: {top_ids.tolist()}")
+        logger.info(f"Layer {i} top 10 most used ID counts: {top_counts.tolist()}")
     
-    # 计算重构
-    logger.info("=== 重构结果 ===")
+    # Calculate reconstruction
+    logger.info("=== Reconstruction Result ===")
     x_hat = model.decode(quantized.embeddings.sum(axis=-1))
     mse = torch.nn.functional.mse_loss(x_hat, data.x)
-    logger.info(f"重构MSE: {mse.item():.4f}")
+    logger.info(f"Reconstruction MSE: {mse.item():.4f}")
     
-    logger.info("查看完成")
+    logger.info("Inspection complete")
 
 if __name__ == "__main__":
     parse_config()
