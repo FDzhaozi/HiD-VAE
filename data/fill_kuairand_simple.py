@@ -11,97 +11,97 @@ import gc
 from torch.serialization import add_safe_globals
 from numpy.core.multiarray import _reconstruct
 
-# 添加安全的全局变量
+# Add safe globals for torch loading
 add_safe_globals([_reconstruct])
 
-# 从fill_kuairand.py导入需要的函数
+# Import necessary functions from fill_kuairand.py
 from data.fill_kuairand import cosine_similarity, check_completion_progress
 
 
 def build_tag_hierarchy(data):
     """
-    遍历数据集，构建标签层级之间的父子关系图。
+    Iterate through the dataset to build a parent-child relationship graph for tag hierarchies.
     """
-    print("正在构建标签层级关系图...")
+    print("Building tag hierarchy graph...")
     item_data = data['item']
     tags_indices = item_data['tags_indices']
-    
+
     l1_to_l2 = {}
     l2_to_l3 = {}
-    
-    for i in tqdm(range(tags_indices.shape[0]), desc="分析层级关系"):
+
+    for i in tqdm(range(tags_indices.shape[0]), desc="Analyzing hierarchical relationships"):
         l1_id, l2_id, l3_id = tags_indices[i, 0].item(), tags_indices[i, 1].item(), tags_indices[i, 2].item()
-        
+
         # L1 -> L2
         if l1_id != -1 and l2_id != -1:
             if l1_id not in l1_to_l2:
                 l1_to_l2[l1_id] = set()
             l1_to_l2[l1_id].add(l2_id)
-            
+
         # L2 -> L3
         if l2_id != -1 and l3_id != -1:
             if l2_id not in l2_to_l3:
                 l2_to_l3[l2_id] = set()
             l2_to_l3[l2_id].add(l3_id)
-            
-    # 将set转换为list，方便后续使用
+
+    # Convert sets to lists for easier access later
     for k in l1_to_l2:
         l1_to_l2[k] = list(l1_to_l2[k])
     for k in l2_to_l3:
         l2_to_l3[k] = list(l2_to_l3[k])
-        
-    print(f"层级关系构建完成。 L1->L2 关系数: {len(l1_to_l2)}, L2->L3 关系数: {len(l2_to_l3)}")
-    
+
+    print(f"Hierarchy construction complete. L1->L2 relations: {len(l1_to_l2)}, L2->L3 relations: {len(l2_to_l3)}")
+
     return {"l1_to_l2": l1_to_l2, "l2_to_l3": l2_to_l3}
 
 
 def load_kuairand_dataset(data_path, seed=42):
     """
-    加载KuaiRand数据集并返回数据对象
-    
-    参数:
-        data_path: 数据文件路径
-        seed: 随机种子，用于确保可重现性
-    
-    返回:
-        数据对象
+    Loads the KuaiRand dataset and returns the data object.
+
+    Args:
+        data_path: Path to the data file.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        The data object.
     """
-    print(f"正在从 {data_path} 加载数据...")
-    
-    # 设置随机种子
+    print(f"Loading data from {data_path}...")
+
+    # Set random seeds
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    
-    # 检查文件是否存在
+
+    # Check if the file exists
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"数据文件不存在: {data_path}")
-    
+        raise FileNotFoundError(f"Data file not found: {data_path}")
+
     try:
-        # 加载数据集，显式设置weights_only=False来处理PyTorch 2.6的默认行为变化
+        # Load the dataset, explicitly setting weights_only=False to handle potential PyTorch version issues.
         loaded_data = torch.load(data_path, map_location='cpu', weights_only=False)
-        print("✓ 数据加载成功!")
-        
-        # 处理数据可能是列表或元组的情况
+        print("✓ Data loaded successfully!")
+
+        # Handle cases where the loaded data is a list or tuple
         if isinstance(loaded_data, list):
-            print(f"原始数据类型: {type(loaded_data)}")
+            print(f"Original data type: {type(loaded_data)}")
             if len(loaded_data) > 0:
-                data = loaded_data[0]  # 取第一个元素
-                print(f"提取后的数据类型: {type(data)}")
+                data = loaded_data[0]  # Take the first element
+                print(f"Extracted data type: {type(data)}")
             else:
-                print("错误: 加载的数据列表为空")
+                print("Error: Loaded data list is empty")
                 return None
-        # 如果数据是元组，取第一个元素
+        # If the data is a tuple, take the first element
         elif isinstance(loaded_data, tuple):
-            print(f"原始数据类型: {type(loaded_data)}")
+            print(f"Original data type: {type(loaded_data)}")
             data = loaded_data[0]
-            print(f"提取后的数据类型: {type(data)}")
+            print(f"Extracted data type: {type(data)}")
         else:
             data = loaded_data
-            
+
         return data
     except Exception as e:
-        print(f"加载数据时出错: {e}")
+        print(f"Error loading data: {e}")
         import traceback
         print(traceback.format_exc())
         raise
@@ -109,87 +109,87 @@ def load_kuairand_dataset(data_path, seed=42):
 
 def create_tag_pools(data):
     """
-    为每个层级创建标签池，包括标签文本和对应的嵌入向量
-    
-    参数:
-        data: 数据对象，包含item节点信息
-    
-    返回:
-        三个层级的标签池，每个池包含标签文本和对应的嵌入向量
+    Create tag pools for each level, including tag text and corresponding embedding vectors.
+
+    Args:
+        data: The data object, containing item node information.
+
+    Returns:
+        A list of three tag pools, one for each level, where each pool contains tag text and its embedding.
     """
-    print("正在创建标签池...")
-    
+    print("Creating tag pools...")
+
     if 'item' not in data:
-        raise ValueError("数据集中没有item节点")
-    
+        raise ValueError("Dataset does not contain 'item' node.")
+
     item_data = data['item']
-    
+
     if 'tags_indices' not in item_data:
-        raise ValueError("数据集中没有标签索引信息")
-    
+        raise ValueError("Dataset does not contain tag index information.")
+
     tags_indices = item_data['tags_indices']
-    
-    # 获取标签文本数据
+
+    # Get tag text data
     if 'tags' not in item_data or item_data['tags'] is None:
-        raise ValueError("数据集中没有标签文本信息")
-    
-    # 创建标签池
+        raise ValueError("Dataset does not contain tag text information.")
+
+    # Create tag pools
     tag_pools = []
-    
+
     for level in range(tags_indices.shape[1]):
-        # 获取所有有效的标签索引
+        # Get all valid tag indices for the current level
         valid_indices = tags_indices[:, level]
         valid_indices = valid_indices[valid_indices != -1]
         unique_indices = torch.unique(valid_indices)
-        
-        # 创建标签池
+
+        # Create the pool for this level
         level_pool = {}
-        
+
         for idx in unique_indices:
-            # 找到具有该标签的所有商品
+            # Find all items that have this tag
             items_with_tag = (tags_indices[:, level] == idx).nonzero(as_tuple=True)[0]
-            
+
             if len(items_with_tag) == 0:
                 continue
-            
-            # 获取标签文本
+
+            # Get the tag text from a sample item
             sample_item = items_with_tag[0].item()
             tag_text = item_data['tags'][sample_item][level]
-            
-            # 获取标签嵌入
+
+            # Get the tag embedding
             if 'tags_emb' in item_data and item_data['tags_emb'] is not None:
-                # 获取所有具有该标签的商品的嵌入向量，并取平均
+                # Average the embeddings of all items with this tag
                 tag_embs = item_data['tags_emb'][items_with_tag, level]
                 tag_emb = torch.mean(tag_embs, dim=0)
             else:
-                # 如果没有专门的标签嵌入，使用样本商品的特征向量
+                # If no dedicated tag embedding, use the feature vector of a sample item
                 tag_emb = item_data['x'][sample_item]
-            
-            # 添加到标签池
+
+            # Add to the tag pool
             if tag_text and tag_text != '':
                 level_pool[idx.item()] = {
                     'text': tag_text,
                     'embedding': tag_emb,
                     'count': len(items_with_tag)
                 }
-        
+
         tag_pools.append(level_pool)
-        print(f"第 {level+1} 级标签池创建完成，包含 {len(level_pool)} 个不同标签")
-    
+        print(f"Level {level+1} tag pool created, containing {len(level_pool)} unique tags.")
+
     return tag_pools
 
 
 def retrieve_most_similar_tag(context_embedding, tag_pool, candidate_ids=None):
     """
-    根据上下文嵌入检索最相似的标签。
-    
-    参数:
-        context_embedding: 上下文嵌入向量 (可以是视频标题向量，或和父标签向量的组合)
-        tag_pool: 标签池，包含标签ID、文本和嵌入
-        candidate_ids: (可选) 一个包含候选标签ID的列表，用于约束搜索范围
-    
-    返回:
-        最相似的标签ID、文本、相似度和嵌入向量
+    Retrieve the most similar tag based on a context embedding.
+
+    Args:
+        context_embedding: The context embedding vector (e.g., item title vector, or a combination with parent tags).
+        tag_pool: The tag pool containing tag IDs, text, and embeddings.
+        candidate_ids: (Optional) A list of candidate tag IDs to constrain the search space.
+
+    Returns:
+        The ID, text, similarity score, and embedding of the most similar tag.
     """
     max_similarity = -1
     best_tag_id = None
@@ -197,7 +197,7 @@ def retrieve_most_similar_tag(context_embedding, tag_pool, candidate_ids=None):
     best_tag_embedding = None
 
     search_space = candidate_ids if candidate_ids is not None else tag_pool.keys()
-    
+
     if not search_space:
         return None, None, -1, None
 
@@ -205,168 +205,169 @@ def retrieve_most_similar_tag(context_embedding, tag_pool, candidate_ids=None):
         tag_info = tag_pool.get(tag_id)
         if not tag_info:
             continue
-            
+
         tag_embedding = tag_info['embedding']
         similarity = cosine_similarity(context_embedding, tag_embedding)
-        
+
         if similarity > max_similarity:
             max_similarity = similarity
             best_tag_id = tag_id
             best_tag_text = tag_info['text']
             best_tag_embedding = tag_embedding
-    
+
     return best_tag_id, best_tag_text, max_similarity.item(), best_tag_embedding
 
 
 def complete_tags_hierarchically(data, item_idx, tag_pools, tag_hierarchy):
     """
-    使用层级约束和顺序填充来补全缺失的标签。
-    包含回退机制：当层级约束找不到候选时，回退到在整个层级中搜索。
-    
-    参数:
-        data: 数据对象
-        item_idx: 商品索引
-        tag_pools: 三个层级的标签池
-        tag_hierarchy: 标签层级关系图
-        
-    返回:
-        补全结果字典
+    Complete missing tags using hierarchical constraints and sequential filling.
+    Includes a fallback mechanism: when no candidates are found under hierarchical constraints,
+    it falls back to searching the entire level.
+
+    Args:
+        data: The data object.
+        item_idx: The index of the item to complete.
+        tag_pools: A list of tag pools for the three levels.
+        tag_hierarchy: The tag hierarchy relationship graph.
+
+    Returns:
+        A dictionary with the completion results.
     """
     item_data = data['item']
-    original_indices = item_data['tags_indices'][item_idx].clone() # 克隆以跟踪变化
-    
-    # 获取视频特征向量
+    original_indices = item_data['tags_indices'][item_idx].clone()  # Clone to track changes
+
+    # Get the item's feature vector
     item_embedding = item_data['x'][item_idx]
-    
+
     completion_result = {
         "status": "pending",
-        "补全标签": {},
-        "选择理由": {} # 每层单独记录理由
+        "completed_tags": {},
+        "reasoning": {}  # Record the reason for each level separately
     }
-    
-    # 存储各级标签的向量信息，用于构建上下文
+
+    # Store the vector information of each level's tag to build context
     level_embeddings = {}
     if 'tags_emb' in item_data:
         for i in range(3):
             if original_indices[i] != -1:
                 level_embeddings[i] = item_data['tags_emb'][item_idx, i]
 
-    # --- 按顺序填充 ---
-    
-    # 填充第1级
+    # --- Fill sequentially ---
+
+    # Fill Level 1
     if original_indices[0] == -1:
         tag_id, tag_text, _, tag_embedding = retrieve_most_similar_tag(item_embedding, tag_pools[0])
         if tag_id is not None:
             original_indices[0] = tag_id
             level_embeddings[0] = tag_embedding
-            completion_result["补全标签"][0] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
-            completion_result["选择理由"][0] = "基于视频标题向量全局搜索"
+            completion_result["completed_tags"][0] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
+            completion_result["reasoning"][0] = "Global search based on item feature vector"
 
-    # 填充第2级
+    # Fill Level 2
     if original_indices[1] == -1 and original_indices[0] != -1:
         l1_id = original_indices[0].item()
         candidate_l2_ids = tag_hierarchy['l1_to_l2'].get(l1_id)
-        reason = "基于层级约束搜索"
+        reason = "Search based on hierarchical constraint"
 
-        # 回退机制：如果层级约束下没有候选，则在整个L2中搜索
+        # Fallback: If no candidates under the constraint, search the entire L2
         if not candidate_l2_ids:
-            candidate_l2_ids = None # 传入None表示全局搜索
-            reason = "层级约束无候选，回退到全局搜索"
-        
-        # 构建上下文向量
-        l1_embedding = level_embeddings.get(0, item_embedding) # 如果L1刚填充，用其向量
+            candidate_l2_ids = None  # Passing None indicates a global search
+            reason = "No candidates under hierarchy, falling back to global search"
+
+        # Build context embedding
+        l1_embedding = level_embeddings.get(0, item_embedding)  # If L1 was just filled, use its vector
         context_embedding = 0.6 * l1_embedding + 0.4 * item_embedding
-        
+
         tag_id, tag_text, _, tag_embedding = retrieve_most_similar_tag(context_embedding, tag_pools[1], candidate_l2_ids)
         if tag_id is not None:
             original_indices[1] = tag_id
             level_embeddings[1] = tag_embedding
-            completion_result["补全标签"][1] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
-            completion_result["选择理由"][1] = reason
+            completion_result["completed_tags"][1] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
+            completion_result["reasoning"][1] = reason
 
-    # 填充第3级
+    # Fill Level 3
     if original_indices[2] == -1 and original_indices[1] != -1:
         l2_id = original_indices[1].item()
         candidate_l3_ids = tag_hierarchy['l2_to_l3'].get(l2_id)
-        reason = "基于层级约束搜索"
+        reason = "Search based on hierarchical constraint"
 
-        # 回退机制
+        # Fallback mechanism
         if not candidate_l3_ids:
             candidate_l3_ids = None
-            reason = "层级约束无候选，回退到全局搜索"
-            
-        # 构建上下文向量
+            reason = "No candidates under hierarchy, falling back to global search"
+
+        # Build context embedding
         l1_embedding = level_embeddings.get(0, item_embedding)
         l2_embedding = level_embeddings.get(1, item_embedding)
         context_embedding = 0.5 * l2_embedding + 0.3 * l1_embedding + 0.2 * item_embedding
-        
+
         tag_id, tag_text, _, tag_embedding = retrieve_most_similar_tag(context_embedding, tag_pools[2], candidate_l3_ids)
         if tag_id is not None:
             original_indices[2] = tag_id
             level_embeddings[2] = tag_embedding
-            completion_result["补全标签"][2] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
-            completion_result["选择理由"][2] = reason
-    
-    if completion_result["补全标签"]:
+            completion_result["completed_tags"][2] = {"id": tag_id, "name": tag_text, "embedding": tag_embedding}
+            completion_result["reasoning"][2] = reason
+
+    if completion_result["completed_tags"]:
         completion_result["status"] = "success"
     else:
-        # 检查是否还有缺失
+        # Check if there are still missing tags
         if torch.any(original_indices == -1):
-             completion_result["status"] = "failed"
-             completion_result["message"] = "存在无法填充的层级（例如L1缺失或L1补全失败）"
+            completion_result["status"] = "failed"
+            completion_result["message"] = "Could not fill a level (e.g., L1 was missing or L1 completion failed)"
         else:
-             completion_result["status"] = "complete"
-             completion_result["message"] = "所有标签已完整，无需补全"
+            completion_result["status"] = "complete"
+            completion_result["message"] = "All tags were already complete, no completion needed"
 
     return completion_result
 
 
 def simple_complete_tags(data, tag_pools, tag_hierarchy, batch_size=100, save_path=None, start_idx=0):
     """
-    使用相似度批量补全标签并保存到新的数据文件
-    
-    参数:
-        data: 数据对象
-        tag_pools: 三个层级的标签池
-        tag_hierarchy: 标签层级关系图
-        batch_size: 每批处理的商品数量
-        save_path: 保存补全后数据的路径
-        start_idx: 起始索引，用于断点续传
-    
-    返回:
-        更新后的数据对象
+    Batch complete tags using similarity and save to a new data file.
+
+    Args:
+        data: The data object.
+        tag_pools: A list of tag pools for the three levels.
+        tag_hierarchy: The tag hierarchy relationship graph.
+        batch_size: The number of items to process in each batch.
+        save_path: The path to save the completed data.
+        start_idx: The starting index for processing, for resuming.
+
+    Returns:
+        The updated data object.
     """
-    # 创建数据的副本，避免修改原始数据
+    # Create a copy of the data to avoid modifying the original
     new_data = deepcopy(data)
-    
+
     item_data = new_data['item']
     num_items = item_data['x'].shape[0]
-    
-    # 找出缺少至少一层标签的商品
+
+    # Find items missing at least one tag level
     incomplete_items = []
     for i in range(num_items):
         tags_indices = item_data['tags_indices'][i]
         if torch.any(tags_indices == -1):
             incomplete_items.append(i)
-    
-    # 过滤掉起始索引之前的项
+
+    # Filter out items before the start index
     incomplete_items = [idx for idx in incomplete_items if idx >= start_idx]
-    
+
     total_incomplete = len(incomplete_items)
-    print(f"找到 {total_incomplete} 个缺失标签的商品，从索引 {start_idx} 开始处理")
-    
-    # 找出空标题的视频
+    print(f"Found {total_incomplete} items with missing tags. Starting processing from index {start_idx}.")
+
+    # Find items with empty titles
     empty_title_items = []
     if 'text' in item_data and item_data['text'] is not None:
         for i in range(num_items):
             if not item_data['text'][i] or item_data['text'][i].strip() == '':
                 empty_title_items.append(i)
-        print(f"找到 {len(empty_title_items)} 个空标题的视频")
-    
-    # 为每个批次创建进度条
+        print(f"Found {len(empty_title_items)} items with empty titles.")
+
+    # Calculate number of batches
     num_batches = (total_incomplete + batch_size - 1) // batch_size
-    
-    # 用于保存每批次结果的统计信息
+
+    # Dictionary to store processing statistics
     stats = {
         "processed": 0,
         "successful": 0,
@@ -375,475 +376,477 @@ def simple_complete_tags(data, tag_pools, tag_hierarchy, batch_size=100, save_pa
         "empty_titles_filled": 0,
         "errors": []
     }
-    
-    # 批量处理
+
+    # Batch processing
     for batch_num in range(num_batches):
         batch_start = batch_num * batch_size
         batch_end = min((batch_num + 1) * batch_size, total_incomplete)
         batch_indices = incomplete_items[batch_start:batch_end]
-        
-        print(f"\n处理批次 {batch_num + 1}/{num_batches} (商品索引 {batch_indices[0]} 至 {batch_indices[-1]})")
-        
-        # 创建进度条
-        pbar = tqdm(batch_indices, desc=f"批次 {batch_num+1}")
-        
-        # 遍历批次中的每个商品
+
+        print(f"\nProcessing batch {batch_num + 1}/{num_batches} (Item indices from {batch_indices[0]} to {batch_indices[-1]})")
+
+        # Create a progress bar for the batch
+        pbar = tqdm(batch_indices, desc=f"Batch {batch_num+1}")
+
+        # Iterate over each item in the batch
         for idx in pbar:
-            # 检查是否仍然需要补全
+            # Check if completion is still needed
             tags_indices = item_data['tags_indices'][idx]
             if not torch.any(tags_indices == -1):
                 stats["skipped"] += 1
                 continue
-            
-            # 使用新的分层填充函数
+
+            # Use the new hierarchical filling function
             completion_result = complete_tags_hierarchically(new_data, idx, tag_pools, tag_hierarchy)
             stats["processed"] += 1
-            
-            # 如果补全成功，更新数据
-            if completion_result["status"] == "success" and "补全标签" in completion_result:
-                # 更新标签
-                for level, tag_info in completion_result["补全标签"].items():
+
+            # If completion is successful, update the data
+            if completion_result["status"] == "success" and "completed_tags" in completion_result:
+                # Update tags
+                for level, tag_info in completion_result["completed_tags"].items():
                     level = int(level)
                     if tag_info["id"] is not None:
-                        # 更新标签文本
+                        # Update tag text
                         item_data['tags'][idx][level] = tag_info["name"]
-                        # 更新标签索引
+                        # Update tag index
                         item_data['tags_indices'][idx, level] = tag_info["id"]
-                        # 更新标签嵌入（如果可用）
+                        # Update tag embedding (if available)
                         if tag_info["embedding"] is not None and 'tags_emb' in item_data:
                             item_data['tags_emb'][idx, level] = tag_info["embedding"]
-                
-                # 检查是否为空标题视频，如果是则用补全后的标签作为新标题
+
+                # Check if it's an item with an empty title; if so, use the completed tags as the new title
                 if 'text' in item_data and idx in empty_title_items:
-                    # 获取所有标签（包括原有的和新补全的）
+                    # Get all tags (both original and newly completed)
                     all_tags = item_data['tags'][idx]
-                    # 过滤掉空标签
+                    # Filter out empty tags
                     valid_tags = [tag for tag in all_tags if tag and tag.strip() != '']
-                    
+
                     if valid_tags:
-                        # 使用标签组合作为新标题
+                        # Use the combination of tags as the new title
                         new_title = " ".join(valid_tags)
                         item_data['text'][idx] = new_title
                         stats["empty_titles_filled"] += 1
-                        pbar.set_postfix({"填充标题": new_title[:20] + ('...' if len(new_title) > 20 else '')})
-                
+                        pbar.set_postfix({"Filled Title": new_title[:20] + ('...' if len(new_title) > 20 else '')})
+
                 stats["successful"] += 1
             else:
                 stats["failed"] += 1
-                error_msg = completion_result.get("message", "未知错误")
+                error_msg = completion_result.get("message", "Unknown error")
                 stats["errors"].append((idx, error_msg))
-            
-            # 每完成50个商品保存一次数据
+
+            # Save data every 50 processed items
             if stats["processed"] % 50 == 0 and save_path:
                 temp_save_path = f"{save_path}_temp"
                 torch.save(new_data, temp_save_path)
-                print(f"\n已保存临时数据到 {temp_save_path}")
-        
-        # 每完成一个批次保存一次数据
+                print(f"\nSaved temporary data to {temp_save_path}")
+
+        # Save data after each batch
         if save_path:
             torch.save(new_data, save_path)
-            print(f"\n已保存批次 {batch_num+1} 的数据到 {save_path}")
-    
-    # 保存最终数据
+            print(f"\nSaved batch {batch_num+1} data to {save_path}")
+
+    # Save final data
     if save_path:
         torch.save(new_data, save_path)
-        print(f"\n已保存最终数据到 {save_path}")
-    
-    # 打印统计信息
-    print("\n===== 处理统计 =====")
-    print(f"总处理商品数: {stats['processed']}")
-    print(f"成功补全数: {stats['successful']}")
-    print(f"失败数: {stats['failed']}")
-    print(f"跳过数（已有完整标签）: {stats['skipped']}")
-    print(f"填充空标题数: {stats['empty_titles_filled']}")
-    
+        print(f"\nSaved final data to {save_path}")
+
+    # Print statistics
+    print("\n===== Processing Statistics =====")
+    print(f"Total items processed: {stats['processed']}")
+    print(f"Successfully completed: {stats['successful']}")
+    print(f"Failed to complete: {stats['failed']}")
+    print(f"Skipped (already complete): {stats['skipped']}")
+    print(f"Empty titles filled: {stats['empty_titles_filled']}")
+
     if stats["errors"]:
-        print(f"\n前10个错误:")
+        print(f"\nFirst 10 errors:")
         for idx, error in stats["errors"][:10]:
-            print(f"  - 商品索引 {idx}: {error}")
-    
+            print(f"  - Item index {idx}: {error}")
+
     return new_data
 
 
 def view_tags(data, num_samples=100, seed=42):
     """
-    随机抽取视频信息并打印标签信息
-    
-    参数:
-        data: 数据对象
-        num_samples: 要抽取的样本数量
-        seed: 随机种子
+    Randomly sample items and print their tag information.
+
+    Args:
+        data: The data object.
+        num_samples: The number of samples to draw.
+        seed: The random seed.
     """
-    # 设置随机种子
+    # Set random seed
     random.seed(seed)
-    
+
     item_data = data['item']
     num_items = item_data['x'].shape[0]
-    
-    # 随机抽样
+
+    # Random sampling
     sample_indices = random.sample(range(num_items), min(num_samples, num_items))
-    
-    print(f"\n===== 随机抽取的 {len(sample_indices)} 条视频信息 =====")
-    
-    # 计算标签完整度统计
+
+    print(f"\n===== Randomly Sampled Information for {len(sample_indices)} Items =====")
+
+    # Calculate tag completeness statistics for the sample
     complete_count = 0
     level_complete_counts = [0, 0, 0]
-    
+
     for i, idx in enumerate(sample_indices):
-        title = item_data['text'][idx] if 'text' in item_data and item_data['text'] is not None else "未知标题"
+        title = item_data['text'][idx] if 'text' in item_data and item_data['text'] is not None else "Unknown Title"
         tags = item_data['tags'][idx]
         tags_indices = item_data['tags_indices'][idx]
-        
-        # 检查标签完整度
+
+        # Check tag completeness
         is_complete = True
         for level in range(len(tags)):
             if tags_indices[level] != -1 and tags[level] != '':
                 level_complete_counts[level] += 1
             else:
                 is_complete = False
-        
+
         if is_complete:
             complete_count += 1
-        
-        print(f"\n样本 {i+1} (索引 {idx}):")
-        print(f"  标题: {title[:50]}{'...' if len(title) > 50 else ''}")
-        print(f"  标签:")
+
+        print(f"\nSample {i+1} (Index {idx}):")
+        print(f"  Title: {title[:50]}{'...' if len(title) > 50 else ''}")
+        print(f"  Tags:")
         for level in range(len(tags)):
-            tag_status = "有效" if tags_indices[level] != -1 and tags[level] != '' else "缺失"
-            tag_text = tags[level] if tags_indices[level] != -1 and tags[level] != '' else "无"
-            print(f"    - 第{level+1}级: {tag_text} (ID: {tags_indices[level].item()}, 状态: {tag_status})")
-    
-    # 打印统计信息
-    print("\n===== 标签统计信息 =====")
-    print(f"完整标签的视频数量: {complete_count}/{len(sample_indices)} ({complete_count/len(sample_indices)*100:.2f}%)")
+            tag_status = "Valid" if tags_indices[level] != -1 and tags[level] != '' else "Missing"
+            tag_text = tags[level] if tags_indices[level] != -1 and tags[level] != '' else "None"
+            print(f"    - Level {level+1}: {tag_text} (ID: {tags_indices[level].item()}, Status: {tag_status})")
+
+    # Print statistics for the sample
+    print("\n===== Tag Statistics for Sample =====")
+    print(f"Items with complete tags: {complete_count}/{len(sample_indices)} ({complete_count/len(sample_indices)*100:.2f}%)")
     for level in range(3):
-        print(f"第{level+1}级标签完整的视频数量: {level_complete_counts[level]}/{len(sample_indices)} ({level_complete_counts[level]/len(sample_indices)*100:.2f}%)")
+        print(f"Items with complete Level {level+1} tag: {level_complete_counts[level]}/{len(sample_indices)} ({level_complete_counts[level]/len(sample_indices)*100:.2f}%)")
 
 
 def analyze_tag_distribution(data):
     """
-    分析标签分布情况
-    
-    参数:
-        data: 数据对象
+    Analyze the distribution of tags.
+
+    Args:
+        data: The data object.
     """
-    print("\n===== 标签分布分析 =====")
-    
+    print("\n===== Tag Distribution Analysis =====")
+
     item_data = data['item']
     tags_indices = item_data['tags_indices']
     num_items = tags_indices.shape[0]
     num_levels = tags_indices.shape[1]
-    
-    print(f"商品总数: {num_items}")
-    print(f"标签层级数: {num_levels}")
-    
-    # 分析每个层级的标签分布
+
+    print(f"Total number of items: {num_items}")
+    print(f"Number of tag levels: {num_levels}")
+
+    # Analyze the distribution for each level
     for level in range(num_levels):
         level_indices = tags_indices[:, level]
-        
-        # 计算有效标签数量
+
+        # Calculate number of valid tags
         valid_count = (level_indices != -1).sum().item()
         valid_percentage = valid_count / num_items * 100
-        
-        print(f"\n第{level+1}层标签统计:")
-        print(f"  有效标签数量: {valid_count}/{num_items} ({valid_percentage:.2f}%)")
-        
-        # 统计唯一标签数量
+
+        print(f"\nLevel {level+1} Tag Statistics:")
+        print(f"  Number of valid tags: {valid_count}/{num_items} ({valid_percentage:.2f}%)")
+
+        # Count unique tags
         unique_indices = torch.unique(level_indices)
-        print(f"  唯一标签数量: {len(unique_indices)}")
-        
-        # 统计标签出现频率
+        print(f"  Number of unique tags: {len(unique_indices)}")
+
+        # Calculate tag frequency
         if valid_count > 0:
-            # 排除-1（缺失值）
+            # Exclude -1 (missing value)
             valid_indices = level_indices[level_indices != -1]
-            
-            # 计算每个标签的出现次数
+
+            # Count occurrences of each tag
             tag_counts = {}
             for idx in valid_indices:
                 idx_val = idx.item()
                 tag_counts[idx_val] = tag_counts.get(idx_val, 0) + 1
-            
-            # 按出现频率排序
+
+            # Sort tags by frequency
             sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
-            
-            # 显示出现频率最高的前10个标签
-            print(f"  出现频率最高的前10个标签:")
+
+            # Display the top 10 most frequent tags
+            print(f"  Top 10 most frequent tags:")
             for i, (tag_id, count) in enumerate(sorted_tags[:10]):
                 if i < 10:
-                    # 获取标签文本（如果可用）
-                    tag_text = "未知"
+                    # Get tag text (if available)
+                    tag_text = "Unknown"
                     for j in range(num_items):
                         if tags_indices[j, level].item() == tag_id:
                             tag_text = item_data['tags'][j][level]
                             break
-                    
-                    print(f"    {i+1}. ID: {tag_id}, 文本: {tag_text}, 出现次数: {count}, 占比: {count/num_items*100:.2f}%")
-    
-    # 分析标签完整度
+
+                    print(f"    {i+1}. ID: {tag_id}, Text: {tag_text}, Occurrences: {count}, Percentage: {count/num_items*100:.2f}%")
+
+    # Analyze tag completeness
     complete_items = 0
     level_complete_counts = [0] * num_levels
-    
+
     for i in range(num_items):
         item_indices = tags_indices[i]
-        
-        # 检查每个层级是否有效
+
+        # Check if each level is valid
         is_complete = True
         for level in range(num_levels):
             if item_indices[level] != -1:
                 level_complete_counts[level] += 1
             else:
                 is_complete = False
-        
+
         if is_complete:
             complete_items += 1
-    
-    print("\n标签完整度统计:")
-    print(f"完整标签的商品数量: {complete_items}/{num_items} ({complete_items/num_items*100:.2f}%)")
-    
+
+    print("\nTag Completeness Statistics:")
+    print(f"Items with complete tags: {complete_items}/{num_items} ({complete_items/num_items*100:.2f}%)")
+
     for level in range(num_levels):
-        print(f"第{level+1}层标签完整的商品数量: {level_complete_counts[level]}/{num_items} ({level_complete_counts[level]/num_items*100:.2f}%)")
+        print(f"Items with a valid Level {level+1} tag: {level_complete_counts[level]}/{num_items} ({level_complete_counts[level]/num_items*100:.2f}%)")
 
 
 def check_completion_progress(data, save_path=None):
     """
-    检查标签补全进度，找出第一个有残缺标签的索引
-    
-    参数:
-        data: 数据对象
-        save_path: 保存补全后数据的路径（可选）
-    
-    返回:
-        第一个有残缺标签的索引，如果所有标签都完整则返回None
+    Check the tag completion progress and find the index of the first item with a missing tag.
+
+    Args:
+        data: The data object.
+        save_path: (Optional) The path where completed data is saved.
+
+    Returns:
+        The index of the first incomplete item, or None if all are complete.
     """
-    print("\n===== 检查标签补全进度 =====")
-    
+    print("\n===== Checking Tag Completion Progress =====")
+
     if 'item' not in data:
-        raise ValueError("数据集中没有item节点")
-    
+        raise ValueError("Dataset does not contain 'item' node.")
+
     item_data = data['item']
-    
+
     if 'tags_indices' not in item_data:
-        raise ValueError("数据集中没有标签索引信息")
-    
+        raise ValueError("Dataset does not contain tag index information.")
+
     tags_indices = item_data['tags_indices']
     num_items = tags_indices.shape[0]
     num_levels = tags_indices.shape[1]
-    
-    # 统计每层标签的完整情况
+
+    # Tally completeness for each level
     level_complete_counts = [0] * num_levels
     incomplete_items = []
-    
+
     for i in range(num_items):
         item_indices = tags_indices[i]
-        
-        # 检查每个层级是否有效
+
         has_missing = False
         for level in range(num_levels):
             if item_indices[level] != -1:
                 level_complete_counts[level] += 1
             else:
                 has_missing = True
-        
+
         if has_missing:
             incomplete_items.append(i)
-    
-    # 打印统计信息
-    print(f"商品总数: {num_items}")
-    print(f"标签层级数: {num_levels}")
-    
+
+    # Print statistics
+    print(f"Total number of items: {num_items}")
+    print(f"Number of tag levels: {num_levels}")
+
     for level in range(num_levels):
         complete_percentage = level_complete_counts[level] / num_items * 100
-        print(f"第{level+1}层标签完整度: {level_complete_counts[level]}/{num_items} ({complete_percentage:.2f}%)")
-    
+        print(f"Level {level+1} tag completeness: {level_complete_counts[level]}/{num_items} ({complete_percentage:.2f}%)")
+
     total_incomplete = len(incomplete_items)
     complete_percentage = (num_items - total_incomplete) / num_items * 100
-    print(f"完全完整的商品数量: {num_items - total_incomplete}/{num_items} ({complete_percentage:.2f}%)")
-    
-    # 找出第一个有残缺标签的索引
+    print(f"Fully complete items: {num_items - total_incomplete}/{num_items} ({complete_percentage:.2f}%)")
+
+    # Find the first item with an incomplete tag
     first_incomplete_idx = None
     if incomplete_items:
         first_incomplete_idx = incomplete_items[0]
-        print(f"\n第一个有残缺标签的商品索引: {first_incomplete_idx}")
-        
-        # 打印这个商品的信息
+        print(f"\nFirst item with an incomplete tag is at index: {first_incomplete_idx}")
+
+        # Print this item's info
         tags = item_data['tags'][first_incomplete_idx]
-        tags_indices = item_data['tags_indices'][first_incomplete_idx]
-        
-        print("\n该商品的标签信息:")
+        tags_indices_item = item_data['tags_indices'][first_incomplete_idx]
+
+        print("\nTag information for this item:")
         for level in range(num_levels):
-            tag_status = "有效" if tags_indices[level] != -1 else "缺失"
-            tag_text = tags[level] if tags_indices[level] != -1 else "无"
-            print(f"  第{level+1}层: {tag_text} (ID: {tags_indices[level].item()}, 状态: {tag_status})")
-        
-        # 如果提供了保存路径，给出继续补全的命令
+            tag_status = "Valid" if tags_indices_item[level] != -1 else "Missing"
+            tag_text = tags[level] if tags_indices_item[level] != -1 else "None"
+            print(f"  Level {level+1}: {tag_text} (ID: {tags_indices_item[level].item()}, Status: {tag_status})")
+
+        # Provide command to resume completion if a save path is given
         if save_path:
-            print(f"\n要继续补全标签，请使用以下命令:")
+            print(f"\nTo continue completing tags, use the following command:")
             print(f"python -m data.fill_kuairand_simple --data_path {save_path} --start_idx {first_incomplete_idx}")
     else:
-        print("\n所有商品的标签都已完整！")
-    
+        print("\nAll items have complete tags!")
+
     return first_incomplete_idx
 
 
 def fill_empty_titles(data, save_path=None):
     """
-    为空标题的视频填充标题，使用已有的标签作为新标题
-    
-    参数:
-        data: 数据对象
-        save_path: 保存补全后数据的路径
-    
-    返回:
-        更新后的数据对象
+    Fill empty titles for items using their existing tags as the new title.
+
+    Args:
+        data: The data object.
+        save_path: The path to save the updated data.
+
+    Returns:
+        The updated data object.
     """
-    print("\n===== 开始填充空标题 =====")
-    
-    # 创建数据的副本，避免修改原始数据
+    print("\n===== Starting to Fill Empty Titles =====")
+
+    # Create a copy to avoid modifying the original data
     new_data = deepcopy(data)
     item_data = new_data['item']
-    
+
     if 'text' not in item_data or item_data['text'] is None:
-        print("数据中没有文本字段，无法填充标题")
+        print("No 'text' field in data, cannot fill titles.")
         return new_data
-    
-    # 找出空标题的视频
+
+    # Find items with empty titles
     empty_title_items = []
     for i in range(len(item_data['text'])):
         if not item_data['text'][i] or item_data['text'][i].strip() == '':
             empty_title_items.append(i)
-    
-    print(f"找到 {len(empty_title_items)} 个空标题的视频")
-    
+
+    print(f"Found {len(empty_title_items)} items with empty titles.")
+
     if not empty_title_items:
-        print("没有空标题需要填充")
+        print("No empty titles to fill.")
         return new_data
-    
-    # 填充空标题
+
+    # Fill empty titles
     filled_count = 0
-    for idx in tqdm(empty_title_items, desc="填充空标题"):
-        # 获取视频的所有标签
+    for idx in tqdm(empty_title_items, desc="Filling empty titles"):
+        # Get all tags for the item
         if 'tags' in item_data and idx < len(item_data['tags']):
             tags = item_data['tags'][idx]
-            
-            # 过滤掉空标签
+
+            # Filter out empty tags
             valid_tags = [tag for tag in tags if tag and tag.strip() != '']
-            
+
             if valid_tags:
-                # 使用标签组合作为新标题
+                # Use the combination of tags as the new title
                 new_title = " ".join(valid_tags)
                 item_data['text'][idx] = new_title
                 filled_count += 1
-    
-    print(f"\n成功填充 {filled_count} 个空标题")
-    
-    # 保存更新后的数据
+
+    print(f"\nSuccessfully filled {filled_count} empty titles.")
+
+    # Save the updated data
     if save_path:
         torch.save(new_data, save_path)
-        print(f"已保存更新后的数据到: {save_path}")
-    
+        print(f"Saved updated data to: {save_path}")
+
     return new_data
 
 
 def main():
-    """主函数"""
-    # 设置默认数据路径
+    """Main function"""
+    # Set default paths
     default_data_path = os.path.join('dataset', 'kuairand', 'processed', 'title_data_kuairand_5tags.pt')
     default_save_path = os.path.join('dataset', 'kuairand', 'processed', 'title_data_kuairand_5tags_completed.pt')
-    
-    # 获取命令行参数
+
+    # Set up command-line argument parser
     import argparse
-    parser = argparse.ArgumentParser(description='KuaiRand 数据集简单标签补全工具')
+    parser = argparse.ArgumentParser(description='KuaiRand Dataset Simple Tag Completion Tool')
     parser.add_argument('--data_path', type=str, default=default_data_path,
-                        help=f'KuaiRand 数据集文件路径 (默认: {default_data_path})')
-    # parser.add_argument('--data_path', type=str, default=default_save_path,
-    #                     help=f'KuaiRand 数据集文件路径 (默认: {default_data_path})')
+                        help=f'Path to the KuaiRand dataset file (default: {default_data_path})')
     parser.add_argument('--save_path', type=str, default=default_save_path,
-                        help=f'保存补全后数据的路径 (默认: {default_save_path})')
+                        help=f'Path to save the completed data (default: {default_save_path})')
     parser.add_argument('--batch_size', type=int, default=100,
-                        help='批量处理的批次大小 (默认: 100)')
+                        help='Batch size for processing (default: 100)')
     parser.add_argument('--start_idx', type=int, default=0,
-                        help='起始处理的商品索引，用于断点续传 (默认: 0)')
+                        help='Starting item index for resuming processing (default: 0)')
     parser.add_argument('--check_progress', action='store_true',
-                        help='检查标签补全进度，找出第一个有残缺标签的索引')
+                        help='Check tag completion progress and find the first incomplete item')
     parser.add_argument('--view_tags', action='store_true',
-                        help='随机抽取视频信息并打印标签')
+                        help='Randomly sample and print item tag information')
     parser.add_argument('--analyze_tags', action='store_true',
-                        help='分析标签分布情况')
+                        help='Analyze the tag distribution')
     parser.add_argument('--fill_titles', action='store_true',
-                        help='仅填充空标题，不进行标签补全')
+                        help='Only fill empty titles, do not complete tags')
     parser.add_argument('--num_samples', type=int, default=100,
-                        help='随机抽取的样本数量 (默认: 100)')
+                        help='Number of random samples to view (default: 100)')
     parser.add_argument('--seed', type=int, default=42,
-                        help='随机种子 (默认: 42)')
-    
+                        help='Random seed (default: 42)')
+
     args = parser.parse_args()
-    
-    # 设置随机种子
+
+    # Set random seeds
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    
-    # 加载数据集
-    print(f"正在加载数据集: {args.data_path}")
+
+    # Load dataset
+    print(f"Loading dataset: {args.data_path}")
     data = load_kuairand_dataset(args.data_path, args.seed)
-    
+
     if args.view_tags:
-        # 查看标签信息
+        # View tag information
         view_tags(data, args.num_samples, args.seed)
     elif args.analyze_tags:
-        # 分析标签分布
+        # Analyze tag distribution
         analyze_tag_distribution(data)
     elif args.check_progress:
-        # 检查标签补全进度
+        # Check tag completion progress
         first_incomplete_idx = check_completion_progress(data, args.save_path)
         if first_incomplete_idx is not None:
-            print(f"\n要继续补全标签，请使用以下命令:")
+            print(f"\nTo continue completing tags, use the following command:")
             print(f"python -m data.fill_kuairand_simple --data_path {args.save_path} --start_idx {first_incomplete_idx}")
     elif args.fill_titles:
-        # 仅填充空标题
+        # Only fill empty titles
         fill_empty_titles(data, args.save_path)
     else:
-        # 创建标签池
+        # Create tag pools
         tag_pools = create_tag_pools(data)
-        
-        # 构建标签层级关系
+
+        # Build tag hierarchy relationships
         tag_hierarchy = build_tag_hierarchy(data)
-        
-        # 简单批量补全标签并保存
-        print(f"将使用层级约束的相似度补全方法保存数据到: {args.save_path}")
+
+        # Perform simple batch tag completion and save
+        print(f"Starting tag completion with hierarchical constraints. Data will be saved to: {args.save_path}")
         simple_complete_tags(
-            data, 
-            tag_pools, 
+            data,
+            tag_pools,
             tag_hierarchy,
-            args.batch_size, 
-            args.save_path, 
+            args.batch_size,
+            args.save_path,
             args.start_idx
         )
-    
-    print("\n处理完成！")
+
+    print("\nProcessing finished!")
 
 
 if __name__ == "__main__":
-    main() 
+    main()
 
-    # 1. 查看标签分布情况：
+    # --- USAGE EXAMPLES ---
+    
+    # 1. Analyze tag distribution:
     # ```
     # python -m data.fill_kuairand_simple --analyze_tags
     # ```
 
-    # 2. 随机抽取视频信息并查看标签：
+    # 2. Randomly sample items and view their tags:
     # ```
     # python -m data.fill_kuairand_simple --view_tags --num_samples 20
     # ```
 
-    # 3. 检查标签补全进度：
+    # 3. Check tag completion progress:
     # ```
-    # python -m data.fill_kuairand_simple --check_progress
+    # python -m data.fill_kuairand_simple --check_progress --data_path path/to/your/data_completed.pt
     # ```
 
-    # 4. 执行标签补全：
+    # 4. Execute tag completion:
     # ```
     # python -m data.fill_kuairand_simple
-
-    # 仅填充空标题
+    # ```
+    
+    # 5. Only fill empty titles:
+    # ```
     # python -m data.fill_kuairand_simple --fill_titles
+    # ```
