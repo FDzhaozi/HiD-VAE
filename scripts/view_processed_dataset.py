@@ -9,18 +9,21 @@ from pathlib import Path
 from torch.serialization import add_safe_globals
 from numpy.core.multiarray import _reconstruct
 
-# 添加安全的全局变量
+# Add safe global variables for torch loading
 add_safe_globals([_reconstruct])
 
 def parse_gz(path):
-    """解析gzip文件"""
+    """Parse a gzip file."""
     with gzip.open(path, 'r') as g:
         for l in g:
             yield eval(l)
+
+# Define paths
 root_path = Path(__file__).parent.parent
 raw_path = root_path / "dataset" / "amazon" / "raw" / "beauty"
 processed_path = root_path / "dataset" / "amazon" / "processed"
 processed_path_kuairand = root_path / "dataset" / "kuairand" / "processed"
+
 class BeautyDatasetViewer:
     def __init__(self, raw_path=raw_path, processed_path=processed_path):
         self.raw_path = Path(raw_path)
@@ -28,106 +31,106 @@ class BeautyDatasetViewer:
         self.processed_path_kuairand = Path(processed_path_kuairand)
     
     def view_raw_files(self):
-        """显示原始数据文件列表及其大小"""
-        print("\n=== 原始数据文件 ===")
+        """Display the list of raw data files and their sizes."""
+        print("\n=== Raw Data Files ===")
         for file in self.raw_path.glob("*"):
             size_mb = os.path.getsize(file) / (1024 * 1024)
             print(f"{file.name}: {size_mb:.2f}MB")
     
     def view_datamaps(self, n_samples=5):
-        """查看ID映射文件"""
-        print("\n=== 数据映射文件 (datamaps.json) ===")
+        """View the ID mapping file."""
+        print("\n=== Data Mapping File (datamaps.json) ===")
         with open(self.raw_path / "datamaps.json", 'r') as f:
             data_maps = json.load(f)
         
-        print("\n商品ID映射示例:")
+        print("\nItem ID Mapping Examples:")
         items = list(data_maps["item2id"].items())[:n_samples]
         for asin, id in items:
             print(f"ASIN: {asin} -> ID: {id}")
             
-        print(f"\n总商品数: {len(data_maps['item2id'])}")
+        print(f"\nTotal items: {len(data_maps['item2id'])}")
     
     def view_meta(self, n_samples=5):
-        """查看商品元数据"""
-        print("\n=== 商品元数据 (meta.json.gz) ===")
+        """View item metadata."""
+        print("\n=== Item Metadata (meta.json.gz) ===")
         items = []
-        category_counts = {}  # 用于统计不同类别数量的商品数
-        category_examples = {}  # 用于存储每种类别数量的示例商品
+        category_counts = {}  # To count the number of items for different category counts
+        category_examples = {}  # To store an example item for each category count
         total_items = 0
         
         def flatten_categories(categories):
-            """将嵌套的类别列表展平为单一列表"""
+            """Flatten a nested list of categories into a single list."""
             flattened = []
             for cat in categories:
                 if isinstance(cat, list):
                     flattened.extend(cat)
                 else:
                     flattened.append(cat)
-            return list(dict.fromkeys(flattened))  # 去重
+            return list(dict.fromkeys(flattened))  # Deduplicate
         
-        # 第一次遍历：收集所有数据和统计信息
+        # First pass: collect all data and statistics
         for item in parse_gz(self.raw_path / "meta.json.gz"):
             total_items += 1
             
-            # 展平并去重类别
+            # Flatten and deduplicate categories
             categories = flatten_categories(item.get('categories', []))
             num_categories = len(categories)
             
-            # 更新商品的类别为展平后的列表
+            # Update the item's categories to the flattened list
             item['categories'] = categories
             
             category_counts[num_categories] = category_counts.get(num_categories, 0) + 1
             
-            # 保存每种类别数量的第一个示例
+            # Save the first example for each category count
             if num_categories not in category_examples:
                 category_examples[num_categories] = item
             
-            # 保存样例数据
+            # Save sample data
             if len(items) < n_samples:
                 items.append(item)
         
-        # 显示样例数据
-        print("\n商品元数据示例:")
+        # Display sample data
+        print("\nItem Metadata Examples:")
         for item in items:
             print("\n---")
             print(f"ASIN: {item.get('asin')}")
-            print(f"标题: {item.get('title')}")
-            print(f"品牌: {item.get('brand')}")
-            print(f"类别 (展平后): {item.get('categories', [])}")
-            print(f"价格: {item.get('price')}")
+            print(f"Title: {item.get('title')}")
+            print(f"Brand: {item.get('brand')}")
+            print(f"Categories (flattened): {item.get('categories', [])}")
+            print(f"Price: {item.get('price')}")
         
-        # 显示类别统计信息
-        print("\n类别统计信息:")
-        print(f"商品总数: {total_items}")
+        # Display category statistics
+        print("\nCategory Statistics:")
+        print(f"Total items: {total_items}")
         if category_counts:
             min_categories = min(category_counts.keys())
             max_categories = max(category_counts.keys())
-            print(f"最少类别数: {min_categories}")
-            print(f"最多类别数: {max_categories}")
+            print(f"Min number of categories: {min_categories}")
+            print(f"Max number of categories: {max_categories}")
             
-            print("\n各类别数量分布及示例:")
+            print("\nDistribution of category counts and examples:")
             total_counted = 0
             for num_cats in sorted(category_counts.keys()):
                 count = category_counts[num_cats]
                 total_counted += count
-                print(f"\n类别个数({num_cats}): 共{count}个商品")
+                print(f"\nItems with {num_cats} categories: {count} total")
                 
-                # 显示该类别数量的示例商品
+                # Display an example item for this category count
                 example = category_examples[num_cats]
-                print("示例商品:")
+                print("Example item:")
                 print(f"  ASIN: {example.get('asin')}")
-                print(f"  标题: {example.get('title')}")
-                print(f"  品牌: {example.get('brand')}")
-                print(f"  类别: {example.get('categories', [])}")
-                print(f"  价格: {example.get('price')}")
+                print(f"  Title: {example.get('title')}")
+                print(f"  Brand: {example.get('brand')}")
+                print(f"  Categories: {example.get('categories', [])}")
+                print(f"  Price: {example.get('price')}")
             
-            print(f"\n统计总数: {total_counted}")
+            print(f"\nTotal counted: {total_counted}")
             if total_counted != total_items:
-                print(f"警告：统计总数与商品总数不匹配！差异：{total_items - total_counted}")
+                print(f"Warning: Total counted does not match total items! Difference: {total_items - total_counted}")
     
     def view_sequential_data(self, n_samples=5):
-        """查看序列数据"""
-        print("\n=== 用户序列数据 (sequential_data.txt) ===")
+        """View sequential data."""
+        print("\n=== User Sequence Data (sequential_data.txt) ===")
         with open(self.raw_path / "sequential_data.txt", "r") as f:
             sequences = []
             for i, line in enumerate(f):
@@ -136,324 +139,324 @@ class BeautyDatasetViewer:
                 else:
                     break
         
-        print("\n用户序列示例:")
+        print("\nUser Sequence Examples:")
         for seq in sequences:
-            print(f"用户ID: {seq[0]}, 商品序列: {seq[1:5]}... (展示前4个商品)")
+            print(f"User ID: {seq[0]}, Item Sequence: {seq[1:5]}... (showing first 4 items)")
     
     def view_processed_data(self, n_samples=5):
-        """查看处理后的数据"""
-        print("\n=== 处理后的数据 (data.pt) ===")
+        """View processed data."""
+        print("\n=== Processed Data (data.pt) ===")
         try:
-            # 尝试使用 weights_only=False 加载数据
+            # Try to load data using weights_only=False
             #loaded_data = torch.load(self.processed_path / "title_data_beauty_5tags.pt", weights_only=False)
             loaded_data = torch.load(self.processed_path_kuairand / "title_data_kuairand_5tags.pt", weights_only=False)
             
-            # 处理数据可能是列表的情况
+            # Handle the case where the data is a list
             if isinstance(loaded_data, list):
-                print(f"原始数据类型: {type(loaded_data)}")
+                print(f"Original data type: {type(loaded_data)}")
                 if len(loaded_data) > 0:
-                    data = loaded_data[0]  # 取第一个元素
-                    print(f"提取后的数据类型: {type(data)}")
+                    data = loaded_data[0]  # Take the first element
+                    print(f"Extracted data type: {type(data)}")
                 else:
-                    print("错误: 加载的数据列表为空")
+                    print("Error: The loaded data list is empty")
                     return
-            # 如果数据是元组，取第一个元素
+            # If the data is a tuple, take the first element
             elif isinstance(loaded_data, tuple):
-                print(f"原始数据类型: {type(loaded_data)}")
+                print(f"Original data type: {type(loaded_data)}")
                 data = loaded_data[0]
-                print(f"提取后的数据类型: {type(data)}")
+                print(f"Extracted data type: {type(data)}")
             else:
                 data = loaded_data
             
-            print("\n数据结构:")
-            print(f"数据类型: {type(data)}")
-            print("数据键值:")
+            print("\nData Structure:")
+            print(f"Data type: {type(data)}")
+            print("Data keys:")
             for key in data.keys():
                 print(f"- {key}")
                 if key == 'item':
-                    print("  子键值及示例:")
+                    print("  Sub-keys and examples:")
                     for subkey in data[key].keys():
                         print(f"    - {subkey}:")
                         if isinstance(data[key][subkey], torch.Tensor):
-                            print(f"      形状: {data[key][subkey].shape}")
-                            # 对于tags_indices，显示更多不同的样本
+                            print(f"      Shape: {data[key][subkey].shape}")
+                            # For tags_indices, show more different samples
                             if subkey == 'tags_indices' or subkey == 'raw_tags_indices':
-                                print(f"      样本1: {data[key][subkey][0]}")
-                                print(f"      样本2: {data[key][subkey][1]}")
-                                print(f"      样本3: {data[key][subkey][2]}")
-                                print(f"      样本4: {data[key][subkey][3]}")
-                                print(f"      样本5: {data[key][subkey][4]}")
+                                print(f"      Sample 1: {data[key][subkey][0]}")
+                                print(f"      Sample 2: {data[key][subkey][1]}")
+                                print(f"      Sample 3: {data[key][subkey][2]}")
+                                print(f"      Sample 4: {data[key][subkey][3]}")
+                                print(f"      Sample 5: {data[key][subkey][4]}")
                                 
-                                # 新增：计算并显示各层标签的类别个数
-                                print("\n      === 各层标签类别统计 ===")
+                                # New: Calculate and display the number of categories for each tag layer
+                                print("\n      === Tag Category Statistics per Layer ===")
                                 tags_indices = data[key][subkey]
                                 n_layers = tags_indices.shape[1]
                                 for layer in range(n_layers):
-                                    # 获取当前层的唯一标签数量
+                                    # Get the number of unique tags in the current layer
                                     unique_tags = torch.unique(tags_indices[:, layer])
-                                    print(f"      第{layer+1}层标签类别数: {len(unique_tags)}")
-                                    # 显示最小和最大的标签索引
+                                    print(f"        Layer {layer+1} tag categories: {len(unique_tags)}")
+                                    # Display the min and max tag indices
                                     if len(unique_tags) > 0:
-                                        print(f"      第{layer+1}层标签索引范围: {unique_tags.min().item()} 到 {unique_tags.max().item()}")
+                                        print(f"        Layer {layer+1} tag index range: {unique_tags.min().item()} to {unique_tags.max().item()}")
                                     
-                                    # 显示标签分布情况
+                                    # Display tag distribution
                                     tag_counts = {}
                                     for tag in tags_indices[:, layer]:
                                         tag_val = tag.item()
                                         tag_counts[tag_val] = tag_counts.get(tag_val, 0) + 1
                                     
-                                    # 显示出现频率最高的前5个标签
+                                    # Display the top 5 most frequent tags
                                     sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
-                                    print(f"      第{layer+1}层出现频率最高的标签: ", end="")
+                                    print(f"        Layer {layer+1} most frequent tags: ", end="")
                                     for tag_val, count in sorted_tags[:5]:
-                                        print(f"{tag_val}({count}次) ", end="")
+                                        print(f"{tag_val}({count} times) ", end="")
                                     print()
                                 
-                                print("      === 标签类别统计结束 ===\n")
+                                print("      === End of Tag Category Statistics ===\n")
                             else:
-                                # 向量只取前5个元素
-                                print(f"      示例1: {data[key][subkey][:5]}")
+                                # Take only the first 5 elements for vectors
+                                print(f"      Example 1: {data[key][subkey][:5]}")
                         elif subkey == 'tags_mapping_dicts' or subkey == 'tags_reverse_mapping_dicts':
-                            # 对于映射字典，显示每层的字典大小和部分示例
-                            print(f"      类型: {type(data[key][subkey])}")
-                            print(f"      层数: {len(data[key][subkey])}")
+                            # For mapping dictionaries, show the size and some examples for each layer's dict
+                            print(f"      Type: {type(data[key][subkey])}")
+                            print(f"      Number of layers: {len(data[key][subkey])}")
                             for i, layer_dict in enumerate(data[key][subkey]):
-                                print(f"      第{i+1}层映射字典大小: {len(layer_dict)}")
-                                # 显示前3个映射关系
+                                print(f"        Layer {i+1} mapping dict size: {len(layer_dict)}")
+                                # Show the first 3 mapping relations
                                 items = list(layer_dict.items())[:3]
-                                print(f"      第{i+1}层映射示例: {items}")
+                                print(f"        Layer {i+1} mapping examples: {items}")
                         else:
-                            print(f"      类型: {type(data[key][subkey])}")
-                            # 对于布尔类型，直接打印值，不尝试获取长度
+                            print(f"      Type: {type(data[key][subkey])}")
+                            # For boolean types, print the value directly without trying to get length
                             if isinstance(data[key][subkey], bool):
-                                print(f"      值: {data[key][subkey]}")
+                                print(f"      Value: {data[key][subkey]}")
                             else:
-                                print(f"      长度: {len(data[key][subkey])}")
-                                print(f"      示例1: {data[key][subkey][0]}")
-                                print(f"      示例2: {data[key][subkey][1]}")
+                                print(f"      Length: {len(data[key][subkey])}")
+                                print(f"      Example 1: {data[key][subkey][0]}")
+                                print(f"      Example 2: {data[key][subkey][1]}")
                 elif isinstance(data[key], dict):
-                    print("  子键值:")
+                    print("  Sub-keys:")
                     for subkey in data[key].keys():
                         print(f"    - {subkey}")
                         if isinstance(data[key][subkey], dict):
-                            print("      内部键值:")
+                            print("      Inner keys:")
                             for inner_key in data[key][subkey].keys():
                                 print(f"        - {inner_key}")
 
-            # 尝试访问用户交互数据
+            # Try to access user interaction data
             user_item_keys = [k for k in data.keys() if isinstance(k, tuple) and 'user' in k[0] and 'item' in k[2]]
             if user_item_keys:
                 key = user_item_keys[0]
                 if 'history' in data[key]:
-                    print("\n序列划分示例 (leave-one-out策略):")
+                    print("\nSequence Splitting Examples (leave-one-out strategy):")
                     history_data = data[key]['history']
                     
-                    # 获取几个用户的完整序列示例
+                    # Get full sequence examples for a few users
                     sample_users = history_data['train']['userId'][:n_samples]
                     for user_idx in range(len(sample_users)):
                         user_id = sample_users[user_idx]
                         if isinstance(user_id, torch.Tensor):
                             user_id = user_id.item()
-                        print(f"\n用户 {user_id} 的序列:")
+                        print(f"\nSequence for User {user_id}:")
                         
-                        # 训练序列
+                        # Training sequence
                         train_seq = history_data['train']['itemId'][user_idx]
                         train_target = history_data['train']['itemId_fut'][user_idx]
                         if isinstance(train_seq, list):
                             valid_train = [x for x in train_seq if x >= 0]
                         else:  # tensor
                             valid_train = train_seq[train_seq >= 0].tolist()
-                        print(f"训练: {valid_train} -> ", end="")
+                        print(f"Train: {valid_train} -> ", end="")
                         print(train_target.item() if isinstance(train_target, torch.Tensor) else train_target)
                         
-                        # 验证序列
+                        # Validation sequence
                         eval_seq = history_data['eval']['itemId'][user_idx]
                         eval_target = history_data['eval']['itemId_fut'][user_idx]
                         if isinstance(eval_seq, list):
                             valid_eval = [x for x in eval_seq if x >= 0]
                         else:  # tensor
                             valid_eval = eval_seq[eval_seq >= 0].tolist()
-                        print(f"验证: {valid_eval} -> ", end="")
+                        print(f"Validation: {valid_eval} -> ", end="")
                         print(eval_target.item() if isinstance(eval_target, torch.Tensor) else eval_target)
                         
-                        # 测试序列
+                        # Test sequence
                         test_seq = history_data['test']['itemId'][user_idx]
                         test_target = history_data['test']['itemId_fut'][user_idx]
                         if isinstance(test_seq, list):
                             valid_test = [x for x in test_seq if x >= 0]
                         else:  # tensor
                             valid_test = test_seq[test_seq >= 0].tolist()
-                        print(f"测试: {valid_test} -> ", end="")
+                        print(f"Test: {valid_test} -> ", end="")
                         print(test_target.item() if isinstance(test_target, torch.Tensor) else test_target)
                     
-                    print("\n数据集统计:")
-                    print(f"总用户数: {len(set([u.item() if isinstance(u, torch.Tensor) else u for u in history_data['train']['userId']]))}")
+                    print("\nDataset Statistics:")
+                    print(f"Total users: {len(set([u.item() if isinstance(u, torch.Tensor) else u for u in history_data['train']['userId']]))}")
                     
-                    # 计算并打印总交互次数
+                    # Calculate and print the total number of interactions
                     total_interactions = 0
-                    # 计算训练集交互数
+                    # Calculate training set interactions
                     train_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['train']['itemId']])
-                    # 计算验证集交互数
+                    # Calculate validation set interactions
                     eval_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['eval']['itemId']])
-                    # 计算测试集交互数
+                    # Calculate test set interactions
                     test_interactions = sum([(seq >= 0).sum().item() if isinstance(seq, torch.Tensor) else len([x for x in seq if x >= 0]) for seq in history_data['test']['itemId']])
-                    # 计算目标交互数（未来项目）
+                    # Calculate target interactions (future items)
                     future_interactions = len(history_data['train']['itemId_fut']) + len(history_data['eval']['itemId_fut']) + len(history_data['test']['itemId_fut'])
                     
                     total_interactions = train_interactions + eval_interactions + test_interactions + future_interactions
-                    print(f"总交互次数: {total_interactions}")
-                    print(f"  - 训练集交互: {train_interactions}")
-                    print(f"  - 验证集交互: {eval_interactions}")
-                    print(f"  - 测试集交互: {test_interactions}")
-                    print(f"  - 目标交互: {future_interactions}")
+                    print(f"Total interactions: {total_interactions}")
+                    print(f"  - Train interactions: {train_interactions}")
+                    print(f"  - Validation interactions: {eval_interactions}")
+                    print(f"  - Test interactions: {test_interactions}")
+                    print(f"  - Target interactions: {future_interactions}")
                     
-                    # 计算序列长度统计
+                    # Calculate sequence length statistics
                     if isinstance(history_data['train']['itemId'][0], list):
                         train_lengths = [len([x for x in seq if x >= 0]) for seq in history_data['train']['itemId']]
                     else:
                         train_lengths = [(seq >= 0).sum().item() for seq in history_data['train']['itemId']]
                     
-                    print("\n序列长度统计:")
-                    print(f"最短序列长度: {min(train_lengths)}")
-                    print(f"最长序列长度: {max(train_lengths)}")
-                    print(f"平均序列长度: {sum(train_lengths) / len(train_lengths):.2f}")
+                    print("\nSequence Length Statistics:")
+                    print(f"Min sequence length: {min(train_lengths)}")
+                    print(f"Max sequence length: {max(train_lengths)}")
+                    print(f"Avg sequence length: {sum(train_lengths) / len(train_lengths):.2f}")
 
         except Exception as e:
-            print(f"加载处理后的数据时出错: {str(e)}")
-            print("\n提示: 请确保已经运行过数据处理步骤，并且数据文件存在于正确的位置。")
+            print(f"Error loading processed data: {str(e)}")
+            print("\nHint: Please ensure the data processing step has been run and the data file exists in the correct location.")
             import traceback
-            print("\n详细错误信息:")
+            print("\nDetailed error information:")
             print(traceback.format_exc())
 
     def remap_tags_indices(self):
         """
-        对tags_indices进行二次映射，使每一层的标签索引从0开始
-        并将原始索引保存为raw_tags_indices
+        Remaps the tags_indices so that the tag indices for each layer start from 0.
+        The original indices are saved as raw_tags_indices.
         """
-        print("\n=== 重映射标签索引 ===")
+        print("\n=== Remapping Tag Indices ===")
         try:
-            # 加载处理后的数据
+            # Load the processed data
             #data_path = self.processed_path / "title_data_sports_5tags.pt"
             data_path = self.processed_path_kuairand / "title_data_kuairand_5tags.pt"
-            print(f"正在加载数据: {data_path}")
+            print(f"Loading data from: {data_path}")
             loaded_data = torch.load(data_path, weights_only=False)
             
-            # 记录原始数据格式和内容
-            original_format = None  # 记录原始数据格式
-            original_data = loaded_data  # 保存完整的原始数据
+            # Record the original data format and content
+            original_format = None  # Record the original data format
+            original_data = loaded_data  # Save the complete original data
             
             if isinstance(loaded_data, list):
-                print("数据是列表格式")
+                print("Data is in list format")
                 original_format = "list"
                 if len(loaded_data) > 0:
                     data = loaded_data[0]
                 else:
-                    print("错误: 加载的数据列表为空")
+                    print("Error: The loaded data list is empty")
                     return
-            # 如果数据是元组，取第一个元素进行处理
+            # If the data is a tuple, process the first element
             elif isinstance(loaded_data, tuple):
-                print(f"数据是元组格式，长度为: {len(loaded_data)}")
+                print(f"Data is in tuple format with length: {len(loaded_data)}")
                 original_format = "tuple"
-                data = loaded_data[0]  # 只处理第一个元素
-                # 打印元组中每个元素的类型
+                data = loaded_data[0]  # Process only the first element
+                # Print the type of each element in the tuple
                 for i, item in enumerate(loaded_data):
-                    print(f"元组中第 {i+1} 个元素的类型: {type(item)}")
+                    print(f"Type of element {i+1} in tuple: {type(item)}")
             else:
-                print("数据是字典格式")
+                print("Data is in dictionary format")
                 original_format = "dict"
                 data = loaded_data
             
-            # 检查数据结构
+            # Check the data structure
             if 'item' not in data or 'tags_indices' not in data['item']:
-                print("错误: 数据中不包含item.tags_indices字段")
-                print(f"item键中包含的字段: {list(data['item'].keys())}")
+                print("Error: Data does not contain 'item.tags_indices' field")
+                print(f"Fields contained in the 'item' key: {list(data['item'].keys())}")
                 return
             
-            # 获取原始标签索引
+            # Get the original tag indices
             original_tags_indices = data['item']['tags_indices']
-            print(f"原始tags_indices形状: {original_tags_indices.shape}")
+            print(f"Original tags_indices shape: {original_tags_indices.shape}")
             
-            # 检查是否已经重映射过
+            # Check if it has already been remapped
             if 'raw_tags_indices' in data['item']:
-                print("警告: 数据已经被重映射过。")
-                choice = input("是否继续重映射? (y/n): ")
+                print("Warning: The data has already been remapped.")
+                choice = input("Do you want to continue remapping? (y/n): ")
                 if choice.lower() != 'y':
-                    print("操作已取消")
+                    print("Operation cancelled")
                     return
-                print("继续重映射...")
+                print("Continuing with remapping...")
             
-            # 保存原始标签索引
+            # Save the original tag indices
             data['item']['raw_tags_indices'] = original_tags_indices.clone()
             
-            # 对每一层标签进行重映射
+            # Remap the tags for each layer
             remapped_indices = torch.zeros_like(original_tags_indices, dtype=torch.long)
-            mapping_dicts = []  # 存储每一层的映射字典
-            reverse_mapping_dicts = []  # 存储反向映射字典
+            mapping_dicts = []  # Store the mapping dictionary for each layer
+            reverse_mapping_dicts = []  # Store the reverse mapping dictionary
             
-            for layer in range(original_tags_indices.shape[1]):  # 遍历每一层
-                # 获取当前层的所有标签索引
+            for layer in range(original_tags_indices.shape[1]):  # Iterate through each layer
+                # Get all tag indices for the current layer
                 layer_indices = original_tags_indices[:, layer]
                 
-                # 获取唯一索引并排序
+                # Get unique indices and sort them
                 unique_indices = torch.unique(layer_indices).tolist()
-                unique_indices.sort()  # 确保排序，使映射更加稳定
+                unique_indices.sort()  # Ensure sorting to make the mapping more stable
                 
-                # 创建映射字典: 原始索引 -> 新索引(从0开始)
+                # Create mapping dictionary: original index -> new index (starting from 0)
                 mapping = {old_idx: new_idx for new_idx, old_idx in enumerate(unique_indices)}
                 mapping_dicts.append(mapping)
                 
-                # 创建反向映射字典: 新索引 -> 原始索引
+                # Create reverse mapping dictionary: new index -> original index
                 reverse_mapping = {new_idx: old_idx for old_idx, new_idx in mapping.items()}
                 reverse_mapping_dicts.append(reverse_mapping)
                 
-                # 应用映射
+                # Apply the mapping
                 for i in range(len(layer_indices)):
                     remapped_indices[i, layer] = mapping[layer_indices[i].item()]
             
-            # 更新数据
+            # Update the data
             data['item']['tags_indices'] = remapped_indices
             
-            # 保存映射字典，用于后续恢复原始索引
+            # Save the mapping dictionaries to restore original indices later
             data['item']['tags_mapping_dicts'] = mapping_dicts
             data['item']['tags_reverse_mapping_dicts'] = reverse_mapping_dicts
             
-            # 显示重映射结果
-            print("\n重映射完成!")
-            print(f"新的tags_indices形状: {data['item']['tags_indices'].shape}")
+            # Display remapping results
+            print("\nRemapping complete!")
+            print(f"New tags_indices shape: {data['item']['tags_indices'].shape}")
             
-            # 显示每一层的唯一标签数量
-            print("\n每一层标签的唯一数量:")
+            # Display the number of unique tags for each layer
+            print("\nNumber of unique tags per layer:")
             for layer in range(original_tags_indices.shape[1]):
                 original_unique = len(torch.unique(original_tags_indices[:, layer]))
                 new_unique = len(torch.unique(remapped_indices[:, layer]))
-                print(f"第{layer+1}层: 原始唯一标签数 {original_unique}, 重映射后唯一标签数 {new_unique}")
+                print(f"Layer {layer+1}: Original unique tags {original_unique}, Remapped unique tags {new_unique}")
                 
-                # 显示部分映射关系
-                print(f"  映射示例(前3个):")
+                # Display some mapping examples
+                print(f"  Mapping examples (first 3):")
                 items = list(mapping_dicts[layer].items())[:3]
                 for old_idx, new_idx in items:
-                    print(f"    原始索引 {old_idx} -> 新索引 {new_idx}")
+                    print(f"    Original index {old_idx} -> New index {new_idx}")
             
-            # 验证可恢复性
-            print("\n验证重映射的可恢复性:")
-            # 随机选择几个样本进行验证
+            # Verify recoverability
+            print("\nVerifying the recoverability of the remapping:")
+            # Randomly select a few samples for verification
             sample_indices = torch.randint(0, original_tags_indices.shape[0], (5,))
             for idx in sample_indices:
                 idx = idx.item()
-                print(f"\n样本 {idx}:")
+                print(f"\nSample {idx}:")
                 for layer in range(original_tags_indices.shape[1]):
                     original = original_tags_indices[idx, layer].item()
                     remapped = remapped_indices[idx, layer].item()
                     recovered = reverse_mapping_dicts[layer][remapped]
-                    print(f"  第{layer+1}层: 原始索引 {original} -> 重映射索引 {remapped} -> 恢复索引 {recovered}")
-                    assert original == recovered, f"恢复失败: {original} != {recovered}"
+                    print(f"  Layer {layer+1}: Original {original} -> Remapped {remapped} -> Recovered {recovered}")
+                    assert original == recovered, f"Recovery failed: {original} != {recovered}"
             
-            # 保存更新后的数据，根据原始格式保存
-            print("\n正在保存更新后的数据...")
+            # Save the updated data according to the original format
+            print("\nSaving the updated data...")
             if original_format == "list":
                 torch.save([data], data_path)
             elif original_format == "tuple":
-                # 如果是元组，保持原始元组的长度和其他元素不变
+                # If it's a tuple, keep the original tuple length and other elements unchanged
                 if len(original_data) == 1:
                     torch.save((data,), data_path)
                 elif len(original_data) == 2:
@@ -461,41 +464,41 @@ class BeautyDatasetViewer:
                 elif len(original_data) == 3:
                     torch.save((data, original_data[1], original_data[2]), data_path)
                 else:
-                    # 创建一个新的元组，第一个元素是修改后的数据，其余元素保持不变
+                    # Create a new tuple with the modified data as the first element
                     new_data = (data,) + original_data[1:]
                     torch.save(new_data, data_path)
             else:  # dict
                 torch.save(data, data_path)
-            print(f"数据已保存到: {data_path}")
+            print(f"Data saved to: {data_path}")
             
-            # 显示重映射前后的对比
-            print("\n重映射前后的标签索引对比(前5个样本):")
+            # Display a before-and-after comparison
+            print("\nComparison of tag indices before and after remapping (first 5 samples):")
             for i in range(5):
-                print(f"\n样本 {i}:")
-                print(f"  原始索引: {data['item']['raw_tags_indices'][i]}")
-                print(f"  重映射后: {data['item']['tags_indices'][i]}")
+                print(f"\nSample {i}:")
+                print(f"  Original indices: {data['item']['raw_tags_indices'][i]}")
+                print(f"  Remapped indices: {data['item']['tags_indices'][i]}")
             
         except Exception as e:
-            print(f"重映射标签索引时出错: {str(e)}")
+            print(f"Error during tag index remapping: {str(e)}")
             import traceback
-            print("\n详细错误信息:")
+            print("\nDetailed error information:")
             print(traceback.format_exc())
 
 def main():
     viewer = BeautyDatasetViewer()
     
     while True:
-        print("\n=== Amazon Beauty 数据集查看器 ===")
-        print("1. 查看原始数据文件列表")
-        print("2. 查看数据映射文件 (datamaps.json)")
-        print("3. 查看商品元数据 (meta.json.gz)")
-        print("4. 查看用户序列数据 (sequential_data.txt)")
-        print("5. 查看处理后的数据 (data.pt)")
-        print("6. 重映射标签索引")
+        print("\n=== Amazon Beauty Dataset Viewer ===")
+        print("1. View list of raw data files")
+        print("2. View data mapping file (datamaps.json)")
+        print("3. View item metadata (meta.json.gz)")
+        print("4. View user sequence data (sequential_data.txt)")
+        print("5. View processed data (data.pt)")
+        print("6. Remap tag indices")
         
-        print("0. 退出")
+        print("0. Exit")
         
-        choice = input("\n请选择要查看的内容 (0-6): ")
+        choice = input("\nPlease select an option (0-6): ")
         
         if choice == '0':
             break
@@ -512,9 +515,9 @@ def main():
         elif choice == '6':
             viewer.remap_tags_indices()
         else:
-            print("无效的选择，请重试")
+            print("Invalid choice, please try again")
         
-        input("\n按回车键继续...")
+        input("\nPress Enter to continue...")
 
 if __name__ == "__main__":
     main()
