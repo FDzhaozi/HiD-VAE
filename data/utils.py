@@ -7,16 +7,6 @@ def cycle(dataloader):
 
 
 def batch_to(batch, device):
-    """
-    将批次数据移动到指定设备
-    
-    参数:
-        batch: 批次数据，可以是SeqBatch或TaggedSeqBatch类型
-        device: 目标设备
-        
-    返回:
-        移动到目标设备的批次数据
-    """
     if isinstance(batch, SeqBatch):
         # 处理普通SeqBatch
         return SeqBatch(
@@ -28,7 +18,6 @@ def batch_to(batch, device):
             seq_mask=batch.seq_mask.to(device)
         )
     elif isinstance(batch, TaggedSeqBatch):
-        # 处理带标签的TaggedSeqBatch
         return TaggedSeqBatch(
             user_ids=batch.user_ids.to(device),
             ids=batch.ids.to(device),
@@ -40,7 +29,6 @@ def batch_to(batch, device):
             tags_indices=batch.tags_indices.to(device)
         )
     else:
-        # 如果不是命名元组，直接移动到设备
         return batch.to(device)
 
 
