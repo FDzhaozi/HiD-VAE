@@ -7,47 +7,45 @@ from einops import rearrange
 from sentence_transformers import SentenceTransformer
 from typing import List
 
-
-
-# 1. 数据预处理
-# ​**_process_genres**：
+# 1. Data Preprocessing
+# **_process_genres**:
 #
-# 处理电影类型（genres）数据。
-# 如果 one_hot=True，直接返回原始数据；否则，将电影类型转换为索引列表。
-# ​**_remove_low_occurrence**：
+# Processes movie genres data.
+# If one_hot=True, returns the original data; otherwise, converts movie genres into a list of indices.
+# **_remove_low_occurrence**:
 #
-# 移除出现次数较少的用户或电影。
-# 通过 groupby 统计每个用户或电影的评分次数，并过滤掉评分次数少于 5 的记录。
-# ​**_encode_text_feature**：
+# Removes users or movies with few occurrences.
+# Counts the number of ratings for each user or movie using groupby and filters out records with fewer than 5 ratings.
+# **_encode_text_feature**:
 #
-# 使用 SentenceTransformer 对文本特征进行编码。
-# 默认使用 sentence-t5-xl 模型。
+# Encodes text features using SentenceTransformer.
+# Uses the 'sentence-t5-xl' model by default.
 
-# ​2. 滑动窗口生成用户历史记录
-# ​**_rolling_window**：
-# 对每个用户的评分记录应用滑动窗口。
-# 使用 np.lib.stride_tricks.as_strided 实现高效的滑动窗口计算。
-# 将窗口内的特征数据转换为 torch.Tensor。
+# 2. Sliding Window Generation for User History
+# **_rolling_window**:
+# Applies a sliding window to each user's rating history.
+# Uses np.lib.stride_tricks.as_strided for efficient sliding window computation.
+# Converts the feature data within the window to a torch.Tensor.
 
-# ​3. 数据集划分
-# ​**_ordered_train_test_split**：
-# 根据时间戳将数据集划分为训练集和测试集。
-# 使用分位数（如 train_split=0.8）确定划分阈值。
+# 3. Dataset Splitting
+# **_ordered_train_test_split**:
+# Splits the dataset into training and testing sets based on timestamps.
+# Uses a quantile (e.g., train_split=0.8) to determine the split threshold.
 
-# ​4. 数据格式转换
-# ​**_df_to_tensor_dict**：
-# 将 polars.DataFrame 转换为 torch.Tensor 字典。
-# 处理特征数据和未来特征（如 movieId_fut、rating_fut）。
+# 4. Data Format Conversion
+# **_df_to_tensor_dict**:
+# Converts a polars.DataFrame to a dictionary of torch.Tensors.
+# Processes feature data and future features (e.g., movieId_fut, rating_fut).
 
-# ​5. 生成用户历史记录
-# ​**_generate_user_history**：
-# 主方法，整合上述步骤，生成用户历史记录。
-# 具体流程：
-# 按用户分组，并按时间戳排序。
-# 使用滑动窗口生成用户历史记录。
-# 填充不足窗口大小的记录。
-# 划分训练集和测试集。
-# 将数据转换为 torch.Tensor 字典。
+# 5. Generating User History
+# **_generate_user_history**:
+# Main method that integrates the above steps to generate user history.
+# Specific process:
+# Groups by user and sorts by timestamp.
+# Generates user history sequences using a dynamic window.
+# Pads sequences that are smaller than the window size.
+# Splits the data into training and test sets.
+# Converts the data into a dictionary of torch.Tensors.
 
 
 class PreprocessingMixin:
@@ -203,4 +201,3 @@ class PreprocessingMixin:
         )
         
         return out
-
